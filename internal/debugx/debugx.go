@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"sync/atomic"
+	"time"
 )
 
 var enabled atomic.Bool
@@ -28,5 +29,5 @@ func Printf(format string, args ...any) {
 	if !enabled.Load() {
 		return
 	}
-	fmt.Fprintf(Writer, "[debug] "+format+"\n", args...)
+	fmt.Fprintf(Writer, "[debug] "+time.Now().Format("2006-01-02T15:04:05.000Z07:00")+" "+format+"\n", args...)
 }

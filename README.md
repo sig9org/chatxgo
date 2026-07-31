@@ -75,7 +75,7 @@ chatxgo -subject "Deploy done" -body "**v1.2.3** shipped" -mention U0123456 -att
 A mention can be given as `id:label`, separating the identifier and the display name with a colon:
 
 ```sh
-./dist/chatxgo -profile "work" -subject "Deploy done" -body "**v1.2.3** shipped" -mention "jane.doe@example.com:Jane"
+chatxgo -profile "work" -subject "Deploy done" -body "**v1.2.3** shipped" -mention "jane.doe@example.com:Jane"
 ```
 
 ### Updating the CLI

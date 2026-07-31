@@ -198,6 +198,21 @@ func loadConfig(path, profile string, stderr io.Writer) (notify.Config, error) {
 	return cfg, nil
 }
 
+// toolDisplayName maps a notify.Sender's Name() to the human-readable
+// product name shown in CLI output.
+func toolDisplayName(tool string) string {
+	switch tool {
+	case "webex":
+		return "Cisco Webex"
+	case "teams":
+		return "Microsoft Teams"
+	case "slack":
+		return "Slack"
+	default:
+		return tool
+	}
+}
+
 func doSend(c *cli, fs *flag.FlagSet, stdout, stderr io.Writer) int {
 	cfg, err := loadConfig(c.configFile, c.profile, stderr)
 	if err != nil {
@@ -241,7 +256,7 @@ func doSend(c *cli, fs *flag.FlagSet, stdout, stderr io.Writer) int {
 			exit = 1
 			continue
 		}
-		fmt.Fprintf(stdout, "%s: sent\n", r.Tool)
+		fmt.Fprintf(stdout, "Sent to %s\n", toolDisplayName(r.Tool))
 	}
 	return exit
 }
