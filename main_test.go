@@ -162,7 +162,7 @@ func TestRunSendsToEnabledTools(t *testing.T) {
 		t.Errorf("webex should not have been called, hits = %d", webexHits)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "teams: sent") || !strings.Contains(out, "slack: sent") {
+	if !strings.Contains(out, "Sent to Microsoft Teams") || !strings.Contains(out, "Sent to Slack") {
 		t.Errorf("unexpected stdout: %q", out)
 	}
 }
