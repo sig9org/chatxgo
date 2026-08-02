@@ -6,140 +6,68 @@ dotenv: ['project.ini']
 
 silent: true
 
-vars:
-  CLEANUP_DIRS:
-    - .idea
-    - .terraform
-    - .vscode
-  CLEANUP_FILES:
-    - .DS_Store
-    - .terraform.lock.hcl
-    - terraform.tfstate
-    - terraform.tfstate.backup
-    - Desktop.ini
-    - Thumbs.db
-  DIST_DIR: dist
-  PLATFORMS: >-
-    darwin/amd64 darwin/arm64
-    linux/386 linux/amd64 linux/arm64
-    windows/386 windows/amd64 windows/arm64
-  RELEASE_VERSION:
-    sh: |
-      v=$(git tag --sort=-creatordate 2>/dev/null | head -n1)
-      echo "${v:-v0.0.0}"
-  VERSION:
-    sh: |
-      v=$(git tag --sort=-creatordate 2>/dev/null | head -n1)
-      echo "${v:-dev}"
+includes:
+  _cleanup: https://raw.githubusercontent.com/sig9org/tasks/main/tasks/_cleanup.yml
+  _go: https://raw.githubusercontent.com/sig9org/tasks/main/tasks/_go.yml
+  _time: https://raw.githubusercontent.com/sig9org/tasks/main/tasks/_time.yml
 
 tasks:
   default:
     cmds:
       - task --list
 
-  _time:end:
-    internal: true
-    platforms: [darwin, linux]
-    preconditions:
-      - sh: "python3 --version"
-      - sh: "test -f .task_start_time"
-    cmds:
-      - |
-        start=$(cat {{.TASKFILE_DIR}}/.task_start_time 2>/dev/null || echo 0)
-        end=$(python3 -c 'import time; print(int(time.time() * 1000))')
-        elapsed_ms=$((end - start))
-        python3 -c "g='\033[32m'; n='\033[0m'; p='======================================== '; ms=$elapsed_ms; s=ms//1000; r=ms%1000; print(f'{g}{p}Elapsed: {s} second{\"s\" if s!=1 else \"\"} {r} millisecond{\"s\" if r!=1 else \"\"}{n}') if s>0 else print(f'{g}{p}Elapsed: {r} millisecond{\"s\" if r!=1 else \"\"}{n}')"
-        rm -f {{.TASKFILE_DIR}}/.task_start_time
-
-  _time:start:
-    internal: true
-    platforms: [darwin, linux]
-    preconditions:
-      - sh: "python3 --version"
-    cmds:
-      - python3 -c 'import time; print(int(time.time() * 1000))' > {{.TASKFILE_DIR}}/.task_start_time
-
-  build:
-    aliases: [b]
-    deps: [_time:start]
-    desc: Build a binary for the current platform
-    cmds:
-      - go build -ldflags "-X {{.VERSION_PKG}}.Version={{.VERSION}}" -o {{.DIST_DIR}}/{{.BINARY_NAME}}{{if eq OS "windows"}}.exe{{end}} .
-      - defer: { task: _time:end }
-
-  build-all:
-    aliases: [ba]
-    deps: [_time:start]
-    desc: 'Cross-compile release binaries for all platforms'
-    cmds:
-      - mkdir -p {{.DIST_DIR}}
-      - |
-        set -e
-        for target in {{.PLATFORMS}}; do
-          goos="${target%/*}"
-          goarch="${target#*/}"
-          ext=""
-          if [ "$goos" = "windows" ]; then ext=".exe"; fi
-          out="{{.DIST_DIR}}/{{.BINARY_NAME}}_{{.RELEASE_VERSION}}_${goos}_${goarch}${ext}"
-          echo "building ${out}"
-          CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -ldflags "-X {{.VERSION_PKG}}.Version={{.RELEASE_VERSION}}" -o "$out" .
-        done
-      - defer: { task: _time:end }
-
   cleanup:
     aliases: [c]
     deps: [_time:start]
-    desc: "Remove temporary and unnecessary files"
+    desc: "Cleanup unnecessary files"
     cmds:
-      - task: cleanup:internal
       - defer: { task: _time:end }
+      - task: _cleanup:start
 
-  cleanup:internal:
-    dir: "{{.USER_WORKING_DIR}}"
-    internal: true
-    platforms: [darwin, linux]
-    cmds:
-      - for: { var: CLEANUP_DIRS }
-        cmd: find . -type d -name "{{.ITEM}}" -print -prune -exec rm -rf {} +
-      - for: { var: CLEANUP_FILES }
-        cmd: find . -name "{{.ITEM}}" -print -delete
-
-  run:
-    aliases: [r]
+  go-all-build:
+    aliases: [ga]
     deps: [_time:start]
-    desc: "Run (pass extra flags with: task run -- -debug)"
+    desc: "Cross-compile release binaries for all platforms"
     cmds:
-      - go run -ldflags "-X {{.VERSION_PKG}}.Version={{.VERSION}}" . {{.CLI_ARGS}}
       - defer: { task: _time:end }
+      - task: _go:all-build
 
-  dryrun:
-    aliases: [dr]
+  go-build:
+    aliases: [gb]
     deps: [_time:start]
-    desc: "Run in dry-run mode: check only, no notifications sent"
+    desc: "Build a binary for the current platform"
     cmds:
-      - go run -ldflags "-X {{.VERSION_PKG}}.Version={{.VERSION}}" . -dryrun -debug {{.CLI_ARGS}}
       - defer: { task: _time:end }
+      - task: _go:build
 
-  debug:
-    aliases: [d]
+  go-clean:
+    aliases: [gc]
     deps: [_time:start]
-    desc: "Run with verbose debug output (pass extra flags with: task debug -- -dryrun)"
+    desc: "Delete the contents of the distribution directory"
     cmds:
-      - go run -ldflags "-X {{.VERSION_PKG}}.Version={{.VERSION}}" . -debug {{.CLI_ARGS}}
       - defer: { task: _time:end }
+      - task: _go:clean
 
-  test:
-    aliases: [t]
+  go-register:
+    aliases: [gr]
     deps: [_time:start]
-    desc: "Run the test suite"
+    desc: "Register the latest tagged version on pkg.go.dev"
     cmds:
-      - go test ./... {{.CLI_ARGS}}
       - defer: { task: _time:end }
+      - task: _go:register
 
-  version:
-    aliases: [v]
+  go-test:
+    aliases: [gt]
+    deps: [_time:start]
+    desc: "Run the Go test suite"
+    cmds:
+      - defer: { task: _time:end }
+      - task: _go:test
+
+  go-version:
+    aliases: [gv]
     deps: [_time:start]
     desc: "Show version information"
     cmds:
-      - go run -ldflags "-X {{.VERSION_PKG}}.Version={{.VERSION}}" . -v
       - defer: { task: _time:end }
+      - task: _go:version

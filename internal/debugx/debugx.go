@@ -7,6 +7,8 @@ import (
 	"os"
 	"sync/atomic"
 	"time"
+
+	"github.com/sig9org/chatxgo/internal/colorx"
 )
 
 var enabled atomic.Bool
@@ -29,5 +31,6 @@ func Printf(format string, args ...any) {
 	if !enabled.Load() {
 		return
 	}
-	fmt.Fprintf(Writer, "[debug] "+time.Now().Format("2006-01-02T15:04:05.000Z07:00")+" "+format+"\n", args...)
+	line := fmt.Sprintf("[debug] "+time.Now().Format("2006-01-02T15:04:05.000Z07:00")+" "+format, args...)
+	fmt.Fprintln(Writer, colorx.Gray(line))
 }

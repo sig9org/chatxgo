@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/chatxgo.png" alt="ChatXGo">
+  <img src="https://raw.githubusercontent.com/sig9org/chatxgo/main/assets/logo.webp" alt="ChatXGo">
 </p>
 
 # ChatXGo
@@ -26,6 +26,8 @@ MSTEAMS_DST=...      # Teams incoming webhook URL
 SLACK_DST=...        # Slack incoming webhook URL
 SLACK_TOKEN=...      # optional, needed only to upload local file attachments
 SLACK_CHANNEL=...    # optional, channel for uploaded attachments
+
+PROXY=...            # optional, HTTP(S) proxy URL every enabled tool's requests are routed through
 ```
 
 ### Config file location and priority
@@ -67,9 +69,12 @@ chatxgo -subject "Deploy done" -body "**v1.2.3** shipped" -mention U0123456 -att
 | `-attach` | `-a` | File path or URL to attach (repeatable, or comma-separated) |
 | `-config` | | Path to the `config.ini` file (default: resolved as described in [Setup](#setup)) |
 | `-profile` | `-p` | Profile (config.ini section) to use (default: `default`) |
-| `-debug` | | Print verbose debug output |
-| `-u` | `-update` | Self-update to the latest GitHub release |
-| `-v` | `-version` | Show version information |
+| `-proxy` | | HTTP(S) proxy URL to route chat tool requests through (overrides `PROXY` in config.ini) |
+| `-dryrun` | | Validate and report what would be sent, without actually sending |
+| `-debug` | | Print verbose debug output (with timestamps) |
+| `-silent` | | Suppress normal stdout messages; overridden by `-debug` if both are given |
+| `-update` | | Self-update to the latest GitHub release |
+| `-v` | `-version` | Show version information (tag plus build commit hash, e.g. `chatxgo v0.0.3 (a3a6ca6)`) |
 | `-h` | `-help` | Show usage information |
 
 A mention can be given as `id:label`, separating the identifier and the display name with a colon:
@@ -78,9 +83,29 @@ A mention can be given as `id:label`, separating the identifier and the display 
 chatxgo -profile "work" -subject "Deploy done" -body "**v1.2.3** shipped" -mention "jane.doe@example.com:Jane"
 ```
 
+### Dry runs
+
+Pass `-dryrun` to validate the message and report which enabled tools it would be sent to, without actually sending it:
+
+```sh
+chatxgo -dryrun -subject "Deploy done" -body "**v1.2.3** shipped"
+```
+
+### Sending through a proxy
+
+Every enabled tool's requests can be routed through an HTTP(S) proxy: set `PROXY` in `config.ini`, or pass `-proxy` on the command line (which takes priority over `PROXY` if both are given):
+
+```sh
+chatxgo -proxy "http://user:pass@proxy.example:8080" -subject "Deploy done" -body "**v1.2.3** shipped"
+```
+
+### Colored output
+
+chatxgo colors terminal messages by severity: normal messages (e.g. `Sent to Slack`) are left uncolored, errors are red, and `-debug` output is gray and timestamped.
+
 ### Updating the CLI
 
-Run `chatxgo -update` (or `chatxgo -u`) to check GitHub for a newer release of chatxgo and replace the currently running binary in place:
+Run `chatxgo -update` to check GitHub for a newer release of chatxgo and replace the currently running binary in place:
 
 ```sh
 chatxgo -update
@@ -100,10 +125,14 @@ Build a `notify.Config` directly in code; this always takes precedence, since li
 ```go
 cfg := notify.Config{
 	Slack: notify.SlackConfig{Dest: "https://hooks.slack.example/..."},
+	Proxy: "http://proxy.example:8080", // optional
 }
 // or load a specific profile (section) from a config.ini file:
 // cfg, err := notify.LoadConfigFile("/path/to/config.ini", "work")
-dispatcher := notify.NewDispatcher(cfg)
+dispatcher, err := notify.NewDispatcher(cfg)
+if err != nil {
+	// only fails if cfg.Proxy is set but isn't a valid proxy URL
+}
 
 results, err := dispatcher.Send(ctx, notify.Message{
 	Subject:     "Deploy done",
@@ -143,9 +172,9 @@ Notable pitfalls:
 ## Development
 
 ```
-task build   # build for the current platform
-task test    # run the test suite
-task debug   # run with -debug
+task go-build          # build for the current platform
+task go-test           # run the test suite
+go run . -debug        # run with -debug
 ```
 
 ## License

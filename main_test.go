@@ -31,13 +31,17 @@ func TestParseFlagsAliases(t *testing.T) {
 		args []string
 		want func(c cli) bool
 	}{
-		{"update short", []string{"-u"}, func(c cli) bool { return c.update }},
-		{"update long", []string{"-update"}, func(c cli) bool { return c.update }},
+		{"update", []string{"-update"}, func(c cli) bool { return c.update }},
 		{"version short", []string{"-v"}, func(c cli) bool { return c.showVersion }},
 		{"version long", []string{"-version"}, func(c cli) bool { return c.showVersion }},
 		{"help short", []string{"-h"}, func(c cli) bool { return c.showHelp }},
 		{"help long", []string{"-help"}, func(c cli) bool { return c.showHelp }},
 		{"debug", []string{"-debug"}, func(c cli) bool { return c.debug }},
+		{"dryrun", []string{"-dryrun"}, func(c cli) bool { return c.dryrun }},
+		{"silent", []string{"-silent"}, func(c cli) bool { return c.silent }},
+		{"subject short", []string{"-s", "hi"}, func(c cli) bool { return c.subject == "hi" }},
+		{"subject long", []string{"-subject", "hi"}, func(c cli) bool { return c.subject == "hi" }},
+		{"proxy", []string{"-proxy", "http://proxy.example:8080"}, func(c cli) bool { return c.proxy == "http://proxy.example:8080" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -343,6 +347,174 @@ func TestRunInvalidMention(t *testing.T) {
 	code := run([]string{"-config", filepath.Join(dir, "missing.ini"), "-body", "hi", "-mention", ":no-id"}, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2, stderr = %q", code, stderr.String())
+	}
+}
+
+func TestRunDryRunDoesNotSend(t *testing.T) {
+	var slackHits int
+	slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slackHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slack.Close()
+
+	dir := t.TempDir()
+	configPath := writeConfig(t, dir, "SLACK_DST="+slack.URL+"\n")
+	t.Chdir(dir)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-config", configPath, "-dryrun", "-body", "hi"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	if slackHits != 0 {
+		t.Errorf("dry run should not send, slack hits = %d", slackHits)
+	}
+	if !strings.Contains(stdout.String(), "Would send to Slack") {
+		t.Errorf("unexpected stdout: %q", stdout.String())
+	}
+}
+
+func TestRunDryRunNoRecipientsEnabled(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-config", filepath.Join(dir, "missing.ini"), "-dryrun", "-body", "hi"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "no chat tool is enabled") {
+		t.Errorf("unexpected stderr: %q", stderr.String())
+	}
+}
+
+func TestRunSilentSuppressesStdout(t *testing.T) {
+	var slackHits int
+	slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slackHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slack.Close()
+
+	dir := t.TempDir()
+	configPath := writeConfig(t, dir, "SLACK_DST="+slack.URL+"\n")
+	t.Chdir(dir)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-config", configPath, "-silent", "-body", "hi"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	if slackHits != 1 {
+		t.Errorf("slack hits = %d, want 1", slackHits)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("expected no stdout output with -silent, got %q", stdout.String())
+	}
+}
+
+func TestRunSilentOverriddenByDebug(t *testing.T) {
+	var slackHits int
+	slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slackHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer slack.Close()
+
+	dir := t.TempDir()
+	configPath := writeConfig(t, dir, "SLACK_DST="+slack.URL+"\n")
+	t.Chdir(dir)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-config", configPath, "-silent", "-debug", "-body", "hi"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Sent to Slack") {
+		t.Errorf("-debug should override -silent, stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "[debug]") {
+		t.Errorf("expected debug output, stdout: %q", stdout.String())
+	}
+}
+
+func TestRunProxyFromConfigFile(t *testing.T) {
+	var destHits, proxyHits int
+	dest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		destHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer dest.Close()
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer proxy.Close()
+
+	dir := t.TempDir()
+	configPath := writeConfig(t, dir, "SLACK_DST="+dest.URL+"\nPROXY="+proxy.URL+"\n")
+	t.Chdir(dir)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-config", configPath, "-body", "hi"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	if proxyHits != 1 {
+		t.Errorf("proxy hits = %d, want 1", proxyHits)
+	}
+	if destHits != 0 {
+		t.Errorf("destination hits = %d, want 0 (request should have gone through the proxy)", destHits)
+	}
+}
+
+func TestRunProxyFlagOverridesConfigFile(t *testing.T) {
+	var configuredProxyHits, flagProxyHits int
+	configuredProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		configuredProxyHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer configuredProxy.Close()
+	flagProxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flagProxyHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer flagProxy.Close()
+
+	dir := t.TempDir()
+	// A plain http:// (not https://) placeholder destination: with a proxy
+	// configured, the request is sent to the proxy in absolute-URI form
+	// without the transport ever dialing this host directly, so it need
+	// not resolve or accept connections.
+	configPath := writeConfig(t, dir, "SLACK_DST=http://elsewhere.invalid\nPROXY="+configuredProxy.URL+"\n")
+	t.Chdir(dir)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-config", configPath, "-proxy", flagProxy.URL, "-body", "hi"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit code = %d, stderr = %q", code, stderr.String())
+	}
+	if flagProxyHits != 1 {
+		t.Errorf("-proxy flag's proxy hits = %d, want 1", flagProxyHits)
+	}
+	if configuredProxyHits != 0 {
+		t.Errorf("config file's proxy hits = %d, want 0 (the -proxy flag should win)", configuredProxyHits)
+	}
+}
+
+func TestRunInvalidProxyFails(t *testing.T) {
+	dir := t.TempDir()
+	configPath := writeConfig(t, dir, "SLACK_DST=https://example.invalid\n")
+	t.Chdir(dir)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-config", configPath, "-proxy", "://bad", "-body", "hi"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "invalid proxy URL") {
+		t.Errorf("unexpected stderr: %q", stderr.String())
 	}
 }
 
