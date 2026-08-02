@@ -111,6 +111,10 @@ type Config struct {
 	Webex WebexConfig
 	Teams TeamsConfig
 	Slack SlackConfig
+	// Proxy is an optional HTTP(S) proxy URL (e.g.
+	// "http://user:pass@proxy.example:8080") that every enabled tool's
+	// requests are routed through. A blank Proxy sends requests directly.
+	Proxy string
 }
 
 // ConfigFromEnv builds a Config by reading environment variables. Prefer
@@ -122,6 +126,7 @@ type Config struct {
 //	WEBEX_TOKEN, WEBEX_DST
 //	MSTEAMS_DST
 //	SLACK_DST, SLACK_TOKEN, SLACK_CHANNEL
+//	PROXY
 func ConfigFromEnv() Config {
 	return Config{
 		Webex: WebexConfig{
@@ -136,23 +141,36 @@ func ConfigFromEnv() Config {
 			Token:   os.Getenv("SLACK_TOKEN"),
 			Channel: os.Getenv("SLACK_CHANNEL"),
 		},
+		Proxy: os.Getenv("PROXY"),
 	}
 }
 
 // Senders returns a Sender for every chat tool in cfg that has a
 // destination configured, in a deterministic order (Webex, Teams, Slack).
-func Senders(cfg Config) []Sender {
+// Every returned Sender routes its requests through cfg.Proxy, if set. It
+// returns an error if cfg.Proxy is set but not a valid proxy URL.
+func Senders(cfg Config) ([]Sender, error) {
+	client, err := proxyHTTPClient(cfg.Proxy)
+	if err != nil {
+		return nil, err
+	}
 	var out []Sender
 	if strings.TrimSpace(cfg.Webex.Dest) != "" {
-		out = append(out, newWebexSender(cfg.Webex))
+		s := newWebexSender(cfg.Webex)
+		s.client = client
+		out = append(out, s)
 	}
 	if strings.TrimSpace(cfg.Teams.Dest) != "" {
-		out = append(out, newTeamsSender(cfg.Teams))
+		s := newTeamsSender(cfg.Teams)
+		s.client = client
+		out = append(out, s)
 	}
 	if strings.TrimSpace(cfg.Slack.Dest) != "" {
-		out = append(out, newSlackSender(cfg.Slack))
+		s := newSlackSender(cfg.Slack)
+		s.client = client
+		out = append(out, s)
 	}
-	return out
+	return out, nil
 }
 
 // Result is the outcome of sending a Message through a single Sender.
@@ -167,9 +185,14 @@ type Dispatcher struct {
 }
 
 // NewDispatcher builds a Dispatcher from cfg. It holds no enabled senders
-// (and Send returns ErrNoRecipients) if every tool is disabled.
-func NewDispatcher(cfg Config) *Dispatcher {
-	return &Dispatcher{senders: Senders(cfg)}
+// (and Send returns ErrNoRecipients) if every tool is disabled. It returns
+// an error if cfg.Proxy is set but not a valid proxy URL.
+func NewDispatcher(cfg Config) (*Dispatcher, error) {
+	senders, err := Senders(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &Dispatcher{senders: senders}, nil
 }
 
 // Send delivers msg to every enabled chat tool and returns one Result per

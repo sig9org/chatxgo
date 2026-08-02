@@ -1,43 +1,181 @@
-# macOS
-.DS_Store
+# Project-Specific
 
-# Windows
-Desktop.ini
-Thumbs.db
+
+
+# Ansible
+.ansible/
+*.retry
 
 # Binaries for programs and plugins
+*.dll
+*.dylib
 *.exe
 *.exe~
-*.dll
 *.so
-*.dylib
 
 # Build output
 /dist/
 
-# Test binary, built with `go test -c`
-*.test
+# Configurations
+.env
+config.ini
+config.yml
+config.yaml
 
 # Code coverage profiles and other test artifacts
-*.out
-coverage.*
 *.coverprofile
+*.out
+*.test
+coverage.*
 profile.cov
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
-go.work
-go.work.sum
-
-# env file
-.env
 
 # Editor/IDE
 .idea/
 .vscode/
 
-# Project Specific
+# Go workspace file
+go.work
+go.work.sum
+
+# go-task
+.task/
 .task_start_time
-config.ini
+
+# Python
+__marimo__/
+__pycache__/
+__pypackages__/
+.abstra/
+.cache
+.coverage
+.coverage.*
+.dmypy.json
+.eggs/
+.env
+.envrc
+.hypothesis/
+.installed.cfg
+.ipynb_checkpoints
+.mypy_cache/
+.nox/
+.pdm-build/
+.pdm-python
+.pixi/*
+.pybuilder/
+.pypirc
+.pyre/
+.pytest_cache/
+.Python
+.pytype/
+.ropeproject
+.ruff_cache/
+.scrapy
+.spyderproject
+.spyproject
+.streamlit/secrets.toml
+.tox/
+.venv
+.webassets-cache
+*.aof
+*.cover
+*.egg
+*.egg-info/
+*.lcov
+*.log
+*.manifest
+*.mo
+*.pid
+*.pot
+*.py.cover
+*.py[codz]
+*.rdb
+*.sage.py
+*.so
+*.spec
+*$py.class
+/site
+activemq-data/
+build/
+celerybeat-schedule*
+celerybeat.pid
+cover/
+coverage.xml
+cython_debug/
+db.sqlite3
+db.sqlite3-journal
+develop-eggs/
+dist/
+dmypy.json
+docs/_build/
+downloads/
+eggs/
+env.bak/
+env/
+ENV/
+htmlcov/
+instance/
+ipython_config.py
+lib/
+lib64/
+local_settings.py
+MANIFEST
+marimo/_lsp/
+marimo/_static/
+mnesia/
+nosetests.xml
+parts/
+pip-delete-this-directory.txt
+pip-log.txt
+profile_default/
+rabbitmq-data/
+rabbitmq/
+sdist/
+share/python-wheels/
+target/
+tempCodeRunnerFile.py
+var/
+venv.bak/
+venv/
+wheels/
+
+# Terraform
+.terraform.tfstate.lock.info
+.terraform/
+.terraformrc
+*_override.tf
+*_override.tf.json
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.*.log
+crash.log
+override.tf
+override.tf.json
+terraform.rc
+
+# macOS
+.DS_Store
+
+# Virtual Machine Images
+*.ova
+*.qcow2
+*.vdi
+*.vhdx
+*.vmdk
+
+# Windows
+*.cab
+*.lnk
+*.msi
+*.msix
+*.msm
+*.msp
+*.stackdump
+$RECYCLE.BIN/
+desktop.ini
+Desktop.ini
+ehthumbs_vista.db
+ehthumbs.db
+Thumbs.db
+Thumbs.db:encryptable

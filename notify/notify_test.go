@@ -3,6 +3,8 @@ package notify
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -63,6 +65,7 @@ func TestConfigFromEnv(t *testing.T) {
 		{"MSTEAMS_DST", ""},
 		{"SLACK_DST", "https://hooks.slack/x"},
 		{"SLACK_TOKEN", "xoxb"}, {"SLACK_CHANNEL", "C1"},
+		{"PROXY", "http://proxy.example:8080"},
 	} {
 		t.Setenv(kv[0], kv[1])
 	}
@@ -77,6 +80,9 @@ func TestConfigFromEnv(t *testing.T) {
 	if cfg.Slack.Dest == "" || cfg.Slack.Token != "xoxb" || cfg.Slack.Channel != "C1" {
 		t.Errorf("unexpected slack config: %+v", cfg.Slack)
 	}
+	if cfg.Proxy != "http://proxy.example:8080" {
+		t.Errorf("unexpected proxy: %q", cfg.Proxy)
+	}
 }
 
 func TestSendersOrderAndFiltering(t *testing.T) {
@@ -84,7 +90,10 @@ func TestSendersOrderAndFiltering(t *testing.T) {
 		Webex: WebexConfig{Token: "t", Dest: "d"},
 		Slack: SlackConfig{Dest: "d"},
 	}
-	senders := Senders(cfg)
+	senders, err := Senders(cfg)
+	if err != nil {
+		t.Fatalf("Senders: %v", err)
+	}
 	if len(senders) != 2 {
 		t.Fatalf("expected 2 senders, got %d", len(senders))
 	}
@@ -99,9 +108,59 @@ func TestSendersDisabledWhenDestBlank(t *testing.T) {
 		Teams: TeamsConfig{Dest: ""},
 		Slack: SlackConfig{Dest: "d"},
 	}
-	senders := Senders(cfg)
+	senders, err := Senders(cfg)
+	if err != nil {
+		t.Fatalf("Senders: %v", err)
+	}
 	if len(senders) != 1 || senders[0].Name() != "slack" {
 		t.Errorf("expected only slack enabled, got %v", senders)
+	}
+}
+
+func TestSendersInvalidProxyURL(t *testing.T) {
+	cfg := Config{Proxy: "://bad", Slack: SlackConfig{Dest: "https://example.com"}}
+	if _, err := Senders(cfg); err == nil {
+		t.Error("expected an error for an invalid proxy URL")
+	}
+}
+
+func TestSendersRouteThroughProxy(t *testing.T) {
+	var destHits, proxyHits int
+	dest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		destHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer dest.Close()
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyHits++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer proxy.Close()
+
+	cfg := Config{Proxy: proxy.URL, Slack: SlackConfig{Dest: dest.URL}}
+	senders, err := Senders(cfg)
+	if err != nil {
+		t.Fatalf("Senders: %v", err)
+	}
+	if len(senders) != 1 {
+		t.Fatalf("expected 1 sender, got %d", len(senders))
+	}
+
+	if err := senders[0].Send(context.Background(), Message{Body: "hi"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if proxyHits != 1 {
+		t.Errorf("proxy hits = %d, want 1", proxyHits)
+	}
+	if destHits != 0 {
+		t.Errorf("destination hits = %d, want 0 (request should have gone through the proxy)", destHits)
+	}
+}
+
+func TestNewDispatcherInvalidProxyURL(t *testing.T) {
+	cfg := Config{Proxy: "://bad", Slack: SlackConfig{Dest: "https://example.com"}}
+	if _, err := NewDispatcher(cfg); err == nil {
+		t.Error("expected an error for an invalid proxy URL")
 	}
 }
 

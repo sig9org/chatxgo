@@ -34,6 +34,7 @@ const DefaultProfile = "default"
 //	WEBEX_TOKEN, WEBEX_DST
 //	MSTEAMS_DST
 //	SLACK_DST, SLACK_TOKEN, SLACK_CHANNEL
+//	PROXY
 func LoadConfigFile(path, profile string) (Config, error) {
 	f, err := ini.Load(path)
 	if err != nil {
@@ -56,6 +57,7 @@ func LoadConfigFile(path, profile string) (Config, error) {
 			Token:   cleanValue(sec.Key("SLACK_TOKEN").String()),
 			Channel: cleanValue(sec.Key("SLACK_CHANNEL").String()),
 		},
+		Proxy: cleanValue(sec.Key("PROXY").String()),
 	}, nil
 }
 

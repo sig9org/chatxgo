@@ -17,6 +17,8 @@ SLACK_CHANNEL="C123"
 
 WEBEX_TOKEN="webex-token"
 WEBEX_DST="room-id"
+
+PROXY="http://proxy.example:8080"
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -36,6 +38,9 @@ WEBEX_DST="room-id"
 	if cfg.Slack.Dest != "https://example.com/slack" ||
 		cfg.Slack.Token != "xoxb-token" || cfg.Slack.Channel != "C123" {
 		t.Errorf("slack = %+v", cfg.Slack)
+	}
+	if cfg.Proxy != "http://proxy.example:8080" {
+		t.Errorf("proxy = %q", cfg.Proxy)
 	}
 }
 

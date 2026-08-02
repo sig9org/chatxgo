@@ -1,17 +1,23 @@
 [default]
+PROXY=
+
 MSTEAMS_DST=
 
-[profile1]
-MSTEAMS_DST=
-
-WEBEX_TOKEN=
-WEBEX_DST=
-
-[profile2]
 SLACK_DST=
 SLACK_TOKEN=
 SLACK_CHANNEL=
 
-[profile3]
+WEBEX_TOKEN=
+WEBEX_DST=
+
+[teams]
+MSTEAMS_DST=
+
+[slack]
+SLACK_DST=
+SLACK_TOKEN=
+SLACK_CHANNEL=
+
+[webex]
 WEBEX_TOKEN=
 WEBEX_DST=
