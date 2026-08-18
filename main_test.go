@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,11 +15,11 @@ import (
 	"github.com/sig9org/chatxgo/internal/version"
 )
 
-// writeConfig writes an INI config file with the given body under dir and
+// writeConfig writes a TOML config file with the given body under dir and
 // returns its path.
 func writeConfig(t *testing.T, dir, body string) string {
 	t.Helper()
-	path := filepath.Join(dir, "config.ini")
+	path := filepath.Join(dir, "config.toml")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -96,16 +97,51 @@ func TestRunHelp(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Usage:") {
 		t.Errorf("help output missing usage section: %q", stdout.String())
 	}
+	wantOptions := `Options:
+  -a, -attach value    File path or URL to attach (repeatable or comma-separated)
+  -b, -body string     Message body, formatted as Markdown
+      -config string   Config file path (default: ./config.toml, then the per-user config directory)
+      -debug           Print verbose debug output
+      -dryrun          Validate and report without sending
+  -h, -help            Show usage information
+  -m, -mention value   User mention: id or id:label (repeatable or comma-separated)
+  -p, -profile string  Config profile to use (default: "default")
+      -proxy string    HTTP(S) proxy URL (overrides PROXY in config.toml)
+      -silent          Suppress normal output (-debug overrides this)
+  -s, -subject string  Message subject/title
+      -update          Update chatxgo to the latest release
+  -v, -version         Show version information
+`
+	if !strings.Contains(stdout.String(), wantOptions) {
+		t.Errorf("help options are not aligned and alphabetically ordered:\n%s", stdout.String())
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(stdout.String(), "\n"), "\n") {
+		if len(line) > 100 {
+			t.Errorf("help line is %d columns, want at most 100: %q", len(line), line)
+		}
+	}
+}
+
+func TestWrapText(t *testing.T) {
+	got := wrapText("one two three four", 9)
+	want := []string{"one two", "three", "four"}
+	if !equal(got, want) {
+		t.Errorf("wrapText = %q, want %q", got, want)
+	}
 }
 
 func TestRunVersion(t *testing.T) {
+	orig := version.Version
+	version.Version = "v0.0.4"
+	defer func() { version.Version = orig }()
+
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"-v"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	if !strings.Contains(stdout.String(), version.Name) {
-		t.Errorf("version output missing tool name: %q", stdout.String())
+	if got, want := stdout.String(), "chatxgo v0.0.4\n"; got != want {
+		t.Errorf("version output = %q, want %q", got, want)
 	}
 }
 
@@ -124,7 +160,7 @@ func TestRunNoContentFails(t *testing.T) {
 }
 
 func TestRunSendsToEnabledTools(t *testing.T) {
-	var webexHits, teamsHits, slackHits int
+	var webexHits, teamsHits, slackHits, discordHits int
 	webex := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		webexHits++
 		w.WriteHeader(http.StatusOK)
@@ -140,14 +176,19 @@ func TestRunSendsToEnabledTools(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer slack.Close()
+	discord := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		discordHits++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer discord.Close()
 
 	// The webex sender hard-codes the real API endpoint, so this test
 	// only exercises the tools whose destination is fully config-driven
-	// (Teams, Slack) end-to-end through the CLI. Webex's own HTTP
+	// (Teams, Slack, Discord) end-to-end through the CLI. Webex's own HTTP
 	// behavior is covered in notify/webex_test.go.
 	dir := t.TempDir()
-	configPath := writeConfig(t, dir, "MSTEAMS_DST="+teams.URL+"\n"+
-		"SLACK_DST="+slack.URL+"\n")
+	configPath := writeConfig(t, dir, fmt.Sprintf("[default]\nMSTEAMS_DST = %q\nSLACK_DST = %q\nDISCORD_DST = %q\n",
+		teams.URL, slack.URL, discord.URL))
 
 	t.Chdir(dir)
 
@@ -162,11 +203,15 @@ func TestRunSendsToEnabledTools(t *testing.T) {
 	if slackHits != 1 {
 		t.Errorf("slack hits = %d, want 1", slackHits)
 	}
+	if discordHits != 1 {
+		t.Errorf("discord hits = %d, want 1", discordHits)
+	}
 	if webexHits != 0 {
 		t.Errorf("webex should not have been called, hits = %d", webexHits)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "Sent to Microsoft Teams") || !strings.Contains(out, "Sent to Slack") {
+	if !strings.Contains(out, "Sent to Microsoft Teams") || !strings.Contains(out, "Sent to Slack") ||
+		!strings.Contains(out, "Sent to Discord") {
 		t.Errorf("unexpected stdout: %q", out)
 	}
 }
@@ -180,7 +225,7 @@ func TestRunLoadsConfigFile(t *testing.T) {
 	defer slack.Close()
 
 	dir := t.TempDir()
-	configPath := writeConfig(t, dir, "SLACK_DST="+slack.URL+"\n")
+	configPath := writeConfig(t, dir, fmt.Sprintf("[default]\nSLACK_DST = %q\n", slack.URL))
 
 	t.Chdir(t.TempDir())
 
@@ -208,8 +253,8 @@ func TestRunSelectsProfile(t *testing.T) {
 	defer workSrv.Close()
 
 	dir := t.TempDir()
-	configPath := writeConfig(t, dir, "[default]\nSLACK_DST="+defaultSrv.URL+"\n\n"+
-		"[work]\nSLACK_DST="+workSrv.URL+"\n")
+	configPath := writeConfig(t, dir, fmt.Sprintf("[default]\nSLACK_DST = %q\n\n[work]\nSLACK_DST = %q\n",
+		defaultSrv.URL, workSrv.URL))
 
 	t.Chdir(t.TempDir())
 
@@ -234,7 +279,7 @@ func TestRunSelectsProfile(t *testing.T) {
 }
 
 // TestRunDefaultConfigPathMissingDisablesTools verifies that when no
-// -config flag is given and no config.ini can be found (neither in the
+// -config flag is given and no config.toml can be found (neither in the
 // current directory nor in the per-user config directory), every chat
 // tool stays disabled rather than falling back to real process
 // environment variables.
@@ -259,8 +304,8 @@ func TestRunDefaultConfigPathMissingDisablesTools(t *testing.T) {
 }
 
 // TestRunDefaultConfigPathUserDir verifies that, absent a -config flag and
-// a config.ini in the current directory, the per-user config directory
-// (~/.config/chatxgo/config.ini on Linux/macOS) is used as a fallback.
+// a config.toml in the current directory, the per-user config directory
+// (~/.config/chatxgo/config.toml on Linux/macOS) is used as a fallback.
 func TestRunDefaultConfigPathUserDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("per-user config dir resolution differs on windows; covered in notify/configfile_test.go")
@@ -278,7 +323,7 @@ func TestRunDefaultConfigPathUserDir(t *testing.T) {
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeConfig(t, cfgDir, "SLACK_DST="+slack.URL+"\n")
+	writeConfig(t, cfgDir, fmt.Sprintf("[default]\nSLACK_DST = %q\n", slack.URL))
 
 	t.Setenv("HOME", home)
 	t.Chdir(t.TempDir())
@@ -294,7 +339,7 @@ func TestRunDefaultConfigPathUserDir(t *testing.T) {
 }
 
 // TestRunDefaultConfigPathCurrentDir verifies that, absent a -config flag,
-// a config.ini in the current directory takes priority over the per-user
+// a config.toml in the current directory takes priority over the per-user
 // config directory.
 func TestRunDefaultConfigPathCurrentDir(t *testing.T) {
 	var currentDirHits, homeHits int
@@ -314,7 +359,7 @@ func TestRunDefaultConfigPathCurrentDir(t *testing.T) {
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeConfig(t, cfgDir, "SLACK_DST="+homeSrv.URL+"\n")
+	writeConfig(t, cfgDir, fmt.Sprintf("[default]\nSLACK_DST = %q\n", homeSrv.URL))
 	if runtime.GOOS == "windows" {
 		t.Setenv("USERPROFILE", home)
 		t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
@@ -323,7 +368,7 @@ func TestRunDefaultConfigPathCurrentDir(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	writeConfig(t, dir, "SLACK_DST="+currentDirSrv.URL+"\n")
+	writeConfig(t, dir, fmt.Sprintf("[default]\nSLACK_DST = %q\n", currentDirSrv.URL))
 	t.Chdir(dir)
 
 	var stdout, stderr bytes.Buffer
@@ -359,7 +404,7 @@ func TestRunDryRunDoesNotSend(t *testing.T) {
 	defer slack.Close()
 
 	dir := t.TempDir()
-	configPath := writeConfig(t, dir, "SLACK_DST="+slack.URL+"\n")
+	configPath := writeConfig(t, dir, fmt.Sprintf("[default]\nSLACK_DST = %q\n", slack.URL))
 	t.Chdir(dir)
 
 	var stdout, stderr bytes.Buffer
@@ -398,7 +443,7 @@ func TestRunSilentSuppressesStdout(t *testing.T) {
 	defer slack.Close()
 
 	dir := t.TempDir()
-	configPath := writeConfig(t, dir, "SLACK_DST="+slack.URL+"\n")
+	configPath := writeConfig(t, dir, fmt.Sprintf("[default]\nSLACK_DST = %q\n", slack.URL))
 	t.Chdir(dir)
 
 	var stdout, stderr bytes.Buffer
@@ -423,7 +468,7 @@ func TestRunSilentOverriddenByDebug(t *testing.T) {
 	defer slack.Close()
 
 	dir := t.TempDir()
-	configPath := writeConfig(t, dir, "SLACK_DST="+slack.URL+"\n")
+	configPath := writeConfig(t, dir, fmt.Sprintf("[default]\nSLACK_DST = %q\n", slack.URL))
 	t.Chdir(dir)
 
 	var stdout, stderr bytes.Buffer
@@ -453,7 +498,7 @@ func TestRunProxyFromConfigFile(t *testing.T) {
 	defer proxy.Close()
 
 	dir := t.TempDir()
-	configPath := writeConfig(t, dir, "SLACK_DST="+dest.URL+"\nPROXY="+proxy.URL+"\n")
+	configPath := writeConfig(t, dir, fmt.Sprintf("[default]\nSLACK_DST = %q\nPROXY = %q\n", dest.URL, proxy.URL))
 	t.Chdir(dir)
 
 	var stdout, stderr bytes.Buffer
@@ -487,7 +532,8 @@ func TestRunProxyFlagOverridesConfigFile(t *testing.T) {
 	// configured, the request is sent to the proxy in absolute-URI form
 	// without the transport ever dialing this host directly, so it need
 	// not resolve or accept connections.
-	configPath := writeConfig(t, dir, "SLACK_DST=http://elsewhere.invalid\nPROXY="+configuredProxy.URL+"\n")
+	configPath := writeConfig(t, dir, fmt.Sprintf("[default]\nSLACK_DST = %q\nPROXY = %q\n",
+		"http://elsewhere.invalid", configuredProxy.URL))
 	t.Chdir(dir)
 
 	var stdout, stderr bytes.Buffer
@@ -505,7 +551,7 @@ func TestRunProxyFlagOverridesConfigFile(t *testing.T) {
 
 func TestRunInvalidProxyFails(t *testing.T) {
 	dir := t.TempDir()
-	configPath := writeConfig(t, dir, "SLACK_DST=https://example.invalid\n")
+	configPath := writeConfig(t, dir, "[default]\nSLACK_DST = \"https://example.invalid\"\n")
 	t.Chdir(dir)
 
 	var stdout, stderr bytes.Buffer

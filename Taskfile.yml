@@ -1,15 +1,35 @@
-# yaml-language-server: $schema=https://taskfile.dev/schema.json
-
 version: '3'
 
-dotenv: ['project.ini']
+dotenv:
+  - '.env'
+  - 'project.ini'
 
 silent: true
 
-includes:
-  _cleanup: https://raw.githubusercontent.com/sig9org/tasks/main/tasks/_cleanup.yml
-  _go: https://raw.githubusercontent.com/sig9org/tasks/main/tasks/_go.yml
-  _time: https://raw.githubusercontent.com/sig9org/tasks/main/tasks/_time.yml
+vars:
+  CLEANUP_DIRS:
+    - .idea
+    - .terraform
+    - .vscode
+  CLEANUP_FILES:
+    - .DS_Store
+    - .terraform.lock.hcl
+    - terraform.tfstate
+    - terraform.tfstate.backup
+    - Desktop.ini
+    - Thumbs.db
+  DIST_DIR: dist
+  MODULE: 'github.com/{{.GITHUB_USER}}/{{.GITHUB_REPO}}'
+  PLATFORMS: >-
+    darwin/amd64 darwin/arm64
+    linux/386 linux/amd64 linux/arm64
+    windows/386 windows/amd64 windows/arm64
+  RELEASE_VERSION:
+    sh: git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0
+  START_TIME: '{{now.UnixMilli}}'
+  VERSION:
+    sh: git describe --tags --always 2>/dev/null || echo dev
+  VERSION_PKG: 'github.com/{{.GITHUB_USER}}/{{.GITHUB_REPO}}/internal/version'
 
 tasks:
   default:
@@ -18,56 +38,205 @@ tasks:
 
   cleanup:
     aliases: [c]
-    deps: [_time:start]
-    desc: "Cleanup unnecessary files"
+    desc: 'Cleanup unnecessary files'
     cmds:
-      - defer: { task: _time:end }
-      - task: _cleanup:start
+      - defer:
+          task: time
+          vars:
+            START_TIME: '{{.START_TIME}}'
+      - task: cleanup:shell
+      - task: cleanup:win
+      - task: cleanup:refresh
 
-  go-all-build:
-    aliases: [ga]
-    deps: [_time:start]
-    desc: "Cross-compile release binaries for all platforms"
+  cleanup:shell:
+    internal: true
+    dir: '{{.USER_WORKING_DIR}}'
+    platforms: [darwin, linux]
     cmds:
-      - defer: { task: _time:end }
-      - task: _go:all-build
+      - for: { var: CLEANUP_DIRS }
+        cmd: find . -type d -name "{{.ITEM}}" -print -prune -exec rm -rf {} + | sed 's/^/[DELETE]/'
+      - for: { var: CLEANUP_FILES }
+        cmd: find . -name "{{.ITEM}}" -print -delete | sed 's/^/[DELETE]/'
+
+  cleanup:win:
+    internal: true
+    dir: '{{.USER_WORKING_DIR}}'
+    platforms: [windows]
+    cmds:
+      - for: { var: CLEANUP_DIRS }
+        cmd: powershell -NoProfile -Command "Get-ChildItem -Path . -Recurse -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq '{{.ITEM}}' } | Sort-Object FullName -Descending | ForEach-Object { Write-Output ('[DELETE]' + $_.FullName); Remove-Item -LiteralPath $_.FullName -Recurse -Force }"
+      - for: { var: CLEANUP_FILES }
+        cmd: powershell -NoProfile -Command "Get-ChildItem -Path . -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq '{{.ITEM}}' } | ForEach-Object { Write-Output ('[DELETE]' + $_.FullName); Remove-Item -LiteralPath $_.FullName -Force }"
+
+  cleanup:refresh:
+    internal: true
+    dir: '{{.ROOT_DIR}}'
+    env:
+      TASK_X_REMOTE_TASKFILES: 1
+    cmds:
+      - task --yes --download --force --list-all > /dev/null 2>&1
 
   go-build:
     aliases: [gb]
-    deps: [_time:start]
-    desc: "Build a binary for the current platform"
+    desc: 'Build a binary for the current platform'
     cmds:
-      - defer: { task: _time:end }
-      - task: _go:build
+      - defer:
+          task: time
+          vars:
+            START_TIME: '{{.START_TIME}}'
+      - defer:
+          task: notify
+          vars:
+            NOTIFY_TITLE: 'Go Build'
+            NOTIFY_BODY: 'Done.'
+      - task: go-clean
+      - echo "Building binary for {{OS}}/{{ARCH}}..."
+      - go build -ldflags "-X {{.VERSION_PKG}}.Version={{.VERSION}}" -o {{.DIST_DIR}}/{{.BINARY_NAME}}{{if eq OS "windows"}}.exe{{end}} .
+
+  go-build-all:
+    aliases: [gba]
+    desc: 'Cross-compile release binaries for all platforms'
+    cmds:
+      - defer:
+          task: time
+          vars:
+            START_TIME: '{{.START_TIME}}'
+      - defer:
+          task: notify
+          vars:
+            NOTIFY_TITLE: 'Go Build All'
+            NOTIFY_BODY: 'Done.'
+      - task: go-clean
+      - |
+        set -e
+        for target in {{.PLATFORMS}}; do
+          goos="${target%/*}"
+          goarch="${target#*/}"
+          ext=""
+          if [ "$goos" = "windows" ]; then ext=".exe"; fi
+          out="{{.DIST_DIR}}/{{.BINARY_NAME}}_{{.RELEASE_VERSION}}_${goos}_${goarch}${ext}"
+          echo "building ${out}"
+          CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -ldflags "-X {{.VERSION_PKG}}.Version={{.RELEASE_VERSION}}" -o "$out" .
+        done
 
   go-clean:
     aliases: [gc]
-    deps: [_time:start]
-    desc: "Delete the contents of the distribution directory"
+    desc: 'Delete the contents of the distribution directory'
     cmds:
-      - defer: { task: _time:end }
-      - task: _go:clean
+      - defer:
+          task: time
+          vars:
+            START_TIME: '{{.START_TIME}}'
+      - rm -rfv {{.DIST_DIR}}/*
+      - mkdir -p {{.DIST_DIR}}
 
   go-register:
-    aliases: [gr]
-    deps: [_time:start]
-    desc: "Register the latest tagged version on pkg.go.dev"
+    desc: 'Register the latest tagged version on pkg.go.dev'
     cmds:
-      - defer: { task: _time:end }
-      - task: _go:register
+      - defer:
+          task: time
+          vars:
+            START_TIME: '{{.START_TIME}}'
+      - |
+        set -e
+        version=$(git describe --tags --abbrev=0)
+        echo "registering {{.MODULE}}@${version} on pkg.go.dev"
+        curl -fsS "https://proxy.golang.org/{{.MODULE}}/@v/${version}.info"
+        echo
+        curl -fsS -o /dev/null "https://pkg.go.dev/{{.MODULE}}@${version}"
+        echo "requested indexing of {{.MODULE}}@${version}"
+
+  go-run:
+    aliases: [gr]
+    desc: 'Run the application'
+    cmds:
+      - defer:
+          task: time
+          vars:
+            START_TIME: '{{.START_TIME}}'
+      - go run . {{.CLI_ARGS}}
+
+  go-scan:
+    aliases: [gs]
+    desc: 'Scan the application'
+    cmds:
+      - defer:
+          task: time
+          vars:
+            START_TIME: '{{.START_TIME}}'
+      - |
+        GREEN='\033[0;32m'
+        RESET='\033[0m'
+        printf '%b======================================== govulncheck%b\n' "$GREEN" "$RESET"
+      - govulncheck ./...
+      - |
+        GREEN='\033[0;32m'
+        RESET='\033[0m'
+        printf '%b======================================== OSV-Scanner%b\n' "$GREEN" "$RESET"
+      - osv-scanner -r .
 
   go-test:
     aliases: [gt]
-    deps: [_time:start]
-    desc: "Run the Go test suite"
+    desc: 'Run the Go test suite'
     cmds:
-      - defer: { task: _time:end }
-      - task: _go:test
+      - defer:
+          task: time
+          vars:
+            START_TIME: '{{.START_TIME}}'
+      - go vet ./...
+      - go test ./...
 
   go-version:
     aliases: [gv]
-    deps: [_time:start]
-    desc: "Show version information"
+    desc: 'Show version information'
     cmds:
-      - defer: { task: _time:end }
-      - task: _go:version
+      - defer:
+          task: time
+          vars:
+            START_TIME: '{{.START_TIME}}'
+      - go run -ldflags "-X {{.VERSION_PKG}}.Version={{.VERSION}}" . -v
+
+  notify:
+    internal: true
+    cmds:
+      - task: notify:mac
+        vars:
+          NOTIFY_TITLE: '{{.NOTIFY_TITLE}}'
+          NOTIFY_BODY: '{{.NOTIFY_BODY}}'
+      - task: notify:win
+        vars:
+          NOTIFY_TITLE: '{{.NOTIFY_TITLE}}'
+          NOTIFY_BODY: '{{.NOTIFY_BODY}}'
+
+  notify:mac:
+    internal: true
+    platforms: [darwin]
+    cmds:
+      - osascript -e 'display notification "{{.NOTIFY_BODY}}" with title "{{.NOTIFY_TITLE}}"'
+      - /bin/sh -c 'nohup /usr/bin/afplay /System/Library/Sounds/Glass.aiff >/dev/null 2>&1 < /dev/null &'
+
+  notify:win:
+    internal: true
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -Command "[System.Media.SystemSounds]::Beep.Play(); $notify = New-Object System.Windows.Forms.NotifyIcon; $notify.Icon = [System.Drawing.SystemIcons]::Information; $notify.BalloonTipTitle = '{{.NOTIFY_TITLE}}'; $notify.BalloonTipText = '{{.NOTIFY_BODY}}'; $notify.Visible = $true; $notify.ShowBalloonTip(5000); Start-Sleep -Seconds 5; $notify.Dispose()"
+
+  time:
+    internal: true
+    vars:
+      END_TIME: '{{now.UnixMilli}}'
+    cmds:
+      - |
+        ELAPSED_MS=$(({{.END_TIME}} - {{.START_TIME}}))
+        MINUTES=$((ELAPSED_MS / 60000))
+        SECONDS=$((ELAPSED_MS % 60000 / 1000))
+        MILLIS=$((ELAPSED_MS % 1000))
+        GREEN='\033[0;32m'
+        RESET='\033[0m'
+        if [ "$MINUTES" -gt 0 ]; then
+          printf '%b======================================== Elapsed: %s min %s sec %s msec%b\n' "$GREEN" "$MINUTES" "$SECONDS" "$MILLIS" "$RESET"
+        elif [ "$SECONDS" -gt 0 ]; then
+          printf '%b======================================== Elapsed: %s sec %s msec%b\n' "$GREEN" "$SECONDS" "$MILLIS" "$RESET"
+        else
+          printf '%b======================================== Elapsed: %s msec%b\n' "$GREEN" "$MILLIS" "$RESET"
+        fi

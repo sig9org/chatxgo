@@ -6,19 +6,22 @@ import (
 	"testing"
 )
 
-func TestLoadConfigFileFlat(t *testing.T) {
+func TestLoadConfigFileDefaultProfile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "config.ini")
-	content := `MSTEAMS_DST=
+	path := filepath.Join(dir, "config.toml")
+	content := `[default]
+MSTEAMS_DST = ""
 
-SLACK_DST="https://example.com/slack"
-SLACK_TOKEN="xoxb-token"
-SLACK_CHANNEL="C123"
+SLACK_DST = "https://example.com/slack"
+SLACK_TOKEN = "xoxb-token"
+SLACK_CHANNEL = "C123"
 
-WEBEX_TOKEN="webex-token"
-WEBEX_DST="room-id"
+DISCORD_DST = "https://discord.com/api/webhooks/1/token"
 
-PROXY="http://proxy.example:8080"
+WEBEX_TOKEN = "webex-token"
+WEBEX_DST = "room-id"
+
+PROXY = "http://proxy.example:8080"
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -39,6 +42,9 @@ PROXY="http://proxy.example:8080"
 		cfg.Slack.Token != "xoxb-token" || cfg.Slack.Channel != "C123" {
 		t.Errorf("slack = %+v", cfg.Slack)
 	}
+	if cfg.Discord.Dest != "https://discord.com/api/webhooks/1/token" {
+		t.Errorf("discord = %+v", cfg.Discord)
+	}
 	if cfg.Proxy != "http://proxy.example:8080" {
 		t.Errorf("proxy = %q", cfg.Proxy)
 	}
@@ -46,13 +52,13 @@ PROXY="http://proxy.example:8080"
 
 func TestLoadConfigFileProfiles(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "config.ini")
+	path := filepath.Join(dir, "config.toml")
 	content := `[default]
-WEBEX_TOKEN="webex-token"
-WEBEX_DST="room-id"
+WEBEX_TOKEN = "webex-token"
+WEBEX_DST = "room-id"
 
 [work]
-MSTEAMS_DST="https://example.com/teams"
+MSTEAMS_DST = "https://example.com/teams"
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -95,32 +101,44 @@ MSTEAMS_DST="https://example.com/teams"
 }
 
 func TestLoadConfigFileMissing(t *testing.T) {
-	if _, err := LoadConfigFile(filepath.Join(t.TempDir(), "missing.ini"), ""); err == nil {
+	if _, err := LoadConfigFile(filepath.Join(t.TempDir(), "missing.toml"), ""); err == nil {
 		t.Fatal("expected an error for a missing file")
 	}
 }
 
-func TestCleanValue(t *testing.T) {
-	cases := map[string]string{
-		`"quoted"`:    "quoted",
-		`'quoted'`:    "quoted",
-		"unquoted":    "unquoted",
-		`  "spaced" `: "spaced",
-		``:            "",
-		`"`:           `"`,
+func TestLoadConfigFileRejectsInvalidTOML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("[default]\nPROXY =\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	for in, want := range cases {
-		if got := cleanValue(in); got != want {
-			t.Errorf("cleanValue(%q) = %q, want %q", in, got, want)
-		}
+	if _, err := LoadConfigFile(path, ""); err == nil {
+		t.Fatal("expected an error for invalid TOML")
+	}
+}
+
+func TestLoadConfigFileRejectsUnknownKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("[default]\nDISCORD_DTS = \"typo\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfigFile(path, ""); err == nil {
+		t.Fatal("expected an error for an unknown key")
+	}
+}
+
+func TestExampleConfigIsValid(t *testing.T) {
+	if _, err := LoadConfigFile(filepath.Join("..", "config.toml.example"), "default"); err != nil {
+		t.Fatalf("config.toml.example is invalid: %v", err)
 	}
 }
 
 func TestUnixAndWindowsConfigPath(t *testing.T) {
-	if got, want := unixConfigPath("/home/alice"), filepath.Join("/home/alice", ".config", "chatxgo", "config.ini"); got != want {
+	if got, want := unixConfigPath("/home/alice"), filepath.Join("/home/alice", ".config", "chatxgo", "config.toml"); got != want {
 		t.Errorf("unixConfigPath = %q, want %q", got, want)
 	}
-	if got, want := windowsConfigPath(`C:\Users\alice\AppData\Roaming`), filepath.Join(`C:\Users\alice\AppData\Roaming`, "chatxgo", "config.ini"); got != want {
+	if got, want := windowsConfigPath(`C:\Users\alice\AppData\Roaming`), filepath.Join(`C:\Users\alice\AppData\Roaming`, "chatxgo", "config.toml"); got != want {
 		t.Errorf("windowsConfigPath = %q, want %q", got, want)
 	}
 }
@@ -130,7 +148,7 @@ func TestDefaultConfigPathPrefersCurrentDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	local := filepath.Join(dir, "config.ini")
+	local := filepath.Join(dir, "config.toml")
 	if err := os.WriteFile(local, []byte(""), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -1,5 +1,5 @@
 // Command chatxgo sends Markdown-formatted notifications to Cisco Webex,
-// Microsoft Teams, and Slack.
+// Microsoft Teams, Slack, and Discord.
 package main
 
 import (
@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -64,19 +65,19 @@ type flagHelp struct {
 }
 
 var flagHelps = []flagHelp{
+	{[]string{"a", "attach"}, "value", "File path or URL to attach (repeatable or comma-separated)"},
+	{[]string{"b", "body"}, "string", "Message body, formatted as Markdown"},
+	{[]string{"config"}, "string", "Config file path (default: ./config.toml, then the per-user config directory)"},
+	{[]string{"debug"}, "", "Print verbose debug output"},
+	{[]string{"dryrun"}, "", "Validate and report without sending"},
+	{[]string{"h", "help"}, "", "Show usage information"},
+	{[]string{"m", "mention"}, "value", "User mention: id or id:label (repeatable or comma-separated)"},
+	{[]string{"p", "profile"}, "string", "Config profile to use (default: \"default\")"},
+	{[]string{"proxy"}, "string", "HTTP(S) proxy URL (overrides PROXY in config.toml)"},
+	{[]string{"silent"}, "", "Suppress normal output (-debug overrides this)"},
+	{[]string{"s", "subject"}, "string", "Message subject/title"},
 	{[]string{"update"}, "", "Update chatxgo to the latest release"},
 	{[]string{"v", "version"}, "", "Show version information"},
-	{[]string{"h", "help"}, "", "Show usage information"},
-	{[]string{"dryrun"}, "", "Validate and report what would be sent, without actually sending"},
-	{[]string{"debug"}, "", "Print verbose debug output"},
-	{[]string{"silent"}, "", "Suppress normal stdout messages (overridden by -debug)"},
-	{[]string{"config"}, "string", "Path to the config.ini file with chat tool credentials (default: config.ini in the current directory, falling back to the per-user config directory)"},
-	{[]string{"p", "profile"}, "string", "Profile (config.ini section) to use (default: \"default\")"},
-	{[]string{"proxy"}, "string", "HTTP(S) proxy URL to route chat tool requests through (overrides PROXY in config.ini)"},
-	{[]string{"s", "subject"}, "string", "Message subject/title"},
-	{[]string{"b", "body"}, "string", "Message body, formatted as Markdown"},
-	{[]string{"m", "mention"}, "value", "User to mention, as \"id\" or \"id:label\" (repeatable, or comma-separated)"},
-	{[]string{"a", "attach"}, "value", "File path or URL to attach (repeatable, or comma-separated)"},
 }
 
 func parseFlags(args []string, errOutput io.Writer, out *cli) (*flag.FlagSet, error) {
@@ -115,19 +116,69 @@ func printUsage(fs *flag.FlagSet) {
 	fmt.Fprintln(fs.Output())
 	fmt.Fprintf(fs.Output(), "Usage: %s [options]\n\n", version.Name)
 	fmt.Fprintln(fs.Output(), "Sends a Markdown-formatted message to every chat tool enabled in")
-	fmt.Fprintln(fs.Output(), "config.ini (Cisco Webex, Microsoft Teams, Slack).")
+	fmt.Fprintln(fs.Output(), "config.toml (Cisco Webex, Microsoft Teams, Slack, Discord).")
 	fmt.Fprintln(fs.Output())
 	fmt.Fprintln(fs.Output(), "Options:")
-	for _, h := range flagHelps {
-		head := "  -" + strings.Join(h.names, ", -")
+	help := append([]flagHelp(nil), flagHelps...)
+	sort.Slice(help, func(i, j int) bool {
+		return help[i].names[len(help[i].names)-1] < help[j].names[len(help[j].names)-1]
+	})
+	longWidth := 0
+	for _, h := range help {
+		long := "-" + h.names[len(h.names)-1]
 		if h.placeholder != "" {
-			head += " " + h.placeholder
+			long += " " + h.placeholder
 		}
-		fmt.Fprintln(fs.Output(), head)
-		fmt.Fprintf(fs.Output(), "    \t%s\n", h.usage)
+		if len(long) > longWidth {
+			longWidth = len(long)
+		}
+	}
+	for _, h := range help {
+		short := ""
+		if len(h.names) == 2 {
+			short = "-" + h.names[0] + ","
+		}
+		long := "-" + h.names[len(h.names)-1]
+		if h.placeholder != "" {
+			long += " " + h.placeholder
+		}
+		prefix := fmt.Sprintf("  %-3s %-*s  ", short, longWidth, long)
+		continuation := strings.Repeat(" ", len(prefix))
+		lines := wrapText(h.usage, 100-len(prefix))
+		fmt.Fprintln(fs.Output(), prefix+lines[0])
+		for _, line := range lines[1:] {
+			fmt.Fprintln(fs.Output(), continuation+line)
+		}
 	}
 	fmt.Fprintln(fs.Output())
-	fmt.Fprintf(fs.Output(), "Example:\n  %s -subject \"Deploy done\" -body \"**v1.2.3** shipped\" -mention U0123456\n", version.Name)
+	fmt.Fprintf(fs.Output(), "Example:\n  %s -subject \"Deploy done\" \\\n    -body \"**v1.2.3** shipped\" -mention U0123456\n", version.Name)
+}
+
+// wrapText wraps text at whitespace so help output remains readable on a
+// typical terminal. Explicit newlines start a new output line.
+func wrapText(s string, width int) []string {
+	if width < 1 {
+		return []string{s}
+	}
+	var lines []string
+	for _, paragraph := range strings.Split(s, "\n") {
+		words := strings.Fields(paragraph)
+		if len(words) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		line := words[0]
+		for _, word := range words[1:] {
+			if len(line)+1+len(word) <= width {
+				line += " " + word
+				continue
+			}
+			lines = append(lines, line)
+			line = word
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 // printError writes args to w as a single line, colored red, matching the
@@ -190,8 +241,8 @@ func doUpdate(stdout, stderr io.Writer, silent bool) int {
 	return 0
 }
 
-// loadConfig resolves and loads the config.ini file to use. If path is
-// empty, it is resolved via notify.DefaultConfigPath (config.ini in the
+// loadConfig resolves and loads the config.toml file to use. If path is
+// empty, it is resolved via notify.DefaultConfigPath (config.toml in the
 // current directory, falling back to the per-user config directory).
 // profile selects which section of the file to read; an empty profile
 // means notify.DefaultProfile. A missing config file is not an error: it
@@ -237,21 +288,6 @@ func redactProxy(proxy string) string {
 	return proxy
 }
 
-// toolDisplayName maps a notify.Sender's Name() to the human-readable
-// product name shown in CLI output.
-func toolDisplayName(tool string) string {
-	switch tool {
-	case "webex":
-		return "Cisco Webex"
-	case "teams":
-		return "Microsoft Teams"
-	case "slack":
-		return "Slack"
-	default:
-		return tool
-	}
-}
-
 func doSend(c *cli, fs *flag.FlagSet, stdout, stderr io.Writer, silent bool) int {
 	cfg, err := loadConfig(c.configFile, c.profile, stderr)
 	if err != nil {
@@ -260,8 +296,8 @@ func doSend(c *cli, fs *flag.FlagSet, stdout, stderr io.Writer, silent bool) int
 	if c.proxy != "" {
 		cfg.Proxy = c.proxy
 	}
-	debugx.Printf("webex enabled=%v teams enabled=%v slack enabled=%v proxy=%q",
-		cfg.Webex.Dest != "", cfg.Teams.Dest != "", cfg.Slack.Dest != "", redactProxy(cfg.Proxy))
+	debugx.Printf("webex enabled=%v teams enabled=%v slack enabled=%v discord enabled=%v proxy=%q",
+		cfg.Webex.Dest != "", cfg.Teams.Dest != "", cfg.Slack.Dest != "", cfg.Discord.Dest != "", redactProxy(cfg.Proxy))
 
 	msg := notify.Message{
 		Subject:     c.subject,
@@ -297,7 +333,7 @@ func doSend(c *cli, fs *flag.FlagSet, stdout, stderr io.Writer, silent bool) int
 		for _, s := range senders {
 			debugx.Printf("dry run: would send to %s", s.Name())
 			if !silent {
-				fmt.Fprintf(stdout, "Would send to %s (dry run)\n", toolDisplayName(s.Name()))
+				fmt.Fprintf(stdout, "Would send to %s (dry run)\n", notify.ToolDisplayName(s.Name()))
 			}
 		}
 		return 0
@@ -322,7 +358,7 @@ func doSend(c *cli, fs *flag.FlagSet, stdout, stderr io.Writer, silent bool) int
 			continue
 		}
 		if !silent {
-			fmt.Fprintf(stdout, "Sent to %s\n", toolDisplayName(r.Tool))
+			fmt.Fprintf(stdout, "Sent to %s\n", notify.ToolDisplayName(r.Tool))
 		}
 	}
 	return exit
