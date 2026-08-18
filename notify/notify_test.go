@@ -1,11 +1,15 @@
 package notify
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/sig9org/chatxgo/internal/debugx"
 )
 
 func TestParseMention(t *testing.T) {
@@ -65,6 +69,7 @@ func TestConfigFromEnv(t *testing.T) {
 		{"MSTEAMS_DST", ""},
 		{"SLACK_DST", "https://hooks.slack/x"},
 		{"SLACK_TOKEN", "xoxb"}, {"SLACK_CHANNEL", "C1"},
+		{"DISCORD_DST", "https://discord.com/api/webhooks/1/token"},
 		{"PROXY", "http://proxy.example:8080"},
 	} {
 		t.Setenv(kv[0], kv[1])
@@ -80,6 +85,9 @@ func TestConfigFromEnv(t *testing.T) {
 	if cfg.Slack.Dest == "" || cfg.Slack.Token != "xoxb" || cfg.Slack.Channel != "C1" {
 		t.Errorf("unexpected slack config: %+v", cfg.Slack)
 	}
+	if cfg.Discord.Dest != "https://discord.com/api/webhooks/1/token" {
+		t.Errorf("unexpected discord config: %+v", cfg.Discord)
+	}
 	if cfg.Proxy != "http://proxy.example:8080" {
 		t.Errorf("unexpected proxy: %q", cfg.Proxy)
 	}
@@ -87,26 +95,28 @@ func TestConfigFromEnv(t *testing.T) {
 
 func TestSendersOrderAndFiltering(t *testing.T) {
 	cfg := Config{
-		Webex: WebexConfig{Token: "t", Dest: "d"},
-		Slack: SlackConfig{Dest: "d"},
+		Webex:   WebexConfig{Token: "t", Dest: "d"},
+		Slack:   SlackConfig{Dest: "d"},
+		Discord: DiscordConfig{Dest: "d"},
 	}
 	senders, err := Senders(cfg)
 	if err != nil {
 		t.Fatalf("Senders: %v", err)
 	}
-	if len(senders) != 2 {
-		t.Fatalf("expected 2 senders, got %d", len(senders))
+	if len(senders) != 3 {
+		t.Fatalf("expected 3 senders, got %d", len(senders))
 	}
-	if senders[0].Name() != "webex" || senders[1].Name() != "slack" {
-		t.Errorf("unexpected sender order: %s, %s", senders[0].Name(), senders[1].Name())
+	if senders[0].Name() != "webex" || senders[1].Name() != "slack" || senders[2].Name() != "discord" {
+		t.Errorf("unexpected sender order: %s, %s, %s", senders[0].Name(), senders[1].Name(), senders[2].Name())
 	}
 }
 
 func TestSendersDisabledWhenDestBlank(t *testing.T) {
 	cfg := Config{
-		Webex: WebexConfig{Token: "t", Dest: "  "},
-		Teams: TeamsConfig{Dest: ""},
-		Slack: SlackConfig{Dest: "d"},
+		Webex:   WebexConfig{Token: "t", Dest: "  "},
+		Teams:   TeamsConfig{Dest: ""},
+		Slack:   SlackConfig{Dest: "d"},
+		Discord: DiscordConfig{Dest: "  "},
 	}
 	senders, err := Senders(cfg)
 	if err != nil {
@@ -114,6 +124,21 @@ func TestSendersDisabledWhenDestBlank(t *testing.T) {
 	}
 	if len(senders) != 1 || senders[0].Name() != "slack" {
 		t.Errorf("expected only slack enabled, got %v", senders)
+	}
+}
+
+func TestToolDisplayName(t *testing.T) {
+	cases := map[string]string{
+		"webex":   "Cisco Webex",
+		"discord": "Discord",
+		"teams":   "Microsoft Teams",
+		"slack":   "Slack",
+		"custom":  "custom",
+	}
+	for tool, want := range cases {
+		if got := ToolDisplayName(tool); got != want {
+			t.Errorf("ToolDisplayName(%q) = %q, want %q", tool, got, want)
+		}
 	}
 }
 
@@ -212,5 +237,26 @@ func TestDispatcherSendAggregatesResults(t *testing.T) {
 	}
 	if ok.got.Body != "hello" {
 		t.Errorf("sender did not receive message body: %+v", ok.got)
+	}
+}
+
+func TestDispatcherDebugUsesToolDisplayName(t *testing.T) {
+	var output bytes.Buffer
+	originalWriter := debugx.Writer
+	debugx.Writer = &output
+	debugx.Enable(true)
+	defer func() {
+		debugx.Enable(false)
+		debugx.Writer = originalWriter
+	}()
+
+	dispatcher := &Dispatcher{senders: []Sender{&stubSender{name: "teams"}}}
+	if _, err := dispatcher.Send(context.Background(), Message{Body: "hello"}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	got := output.String()
+	if !strings.Contains(got, "sending message to Microsoft Teams") ||
+		!strings.Contains(got, "Microsoft Teams: sent") {
+		t.Errorf("debug output does not use the display name: %q", got)
 	}
 }

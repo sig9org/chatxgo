@@ -19,6 +19,7 @@
 # Configurations
 .env
 config.ini
+config.toml
 config.yml
 config.yaml
 

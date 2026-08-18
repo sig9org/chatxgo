@@ -1,6 +1,6 @@
 // Package notify sends Markdown-formatted messages to chat tools (Cisco
-// Webex, Microsoft Teams, Slack). It can be used as a library, or driven by
-// the chatxgo CLI.
+// Webex, Microsoft Teams, Slack, Discord). It can be used as a library, or
+// driven by the chatxgo CLI.
 package notify
 
 import (
@@ -17,10 +17,10 @@ import (
 var ErrNoRecipients = errors.New("notify: no chat tool is enabled")
 
 // Mention identifies a single user to mention in a message. ID is the
-// native identifier expected by the target tool (a Slack user ID such as
-// "U0123456", a Webex person email address, or for Teams a Microsoft
-// Entra object ID or user principal name/email). Label is the display
-// name shown in the message text; if empty, ID is shown instead.
+// native identifier expected by the target tool (a Slack or Discord user ID,
+// a Webex person email address, or for Teams a Microsoft Entra object ID or
+// user principal name/email). Label is the display name shown in the message
+// text where supported; if empty, ID is shown instead.
 type Mention struct {
 	ID    string
 	Label string
@@ -50,8 +50,8 @@ func ParseMention(raw string) (Mention, error) {
 
 // Message is a single notification to deliver to one or more chat tools.
 type Message struct {
-	// Subject is an optional title/summary shown as a heading (Webex/Slack)
-	// or card title (Teams).
+	// Subject is an optional title/summary shown as a heading
+	// (Webex/Slack/Discord) or card title (Teams).
 	Subject string
 	// Body is the message content, formatted as Markdown.
 	Body string
@@ -71,7 +71,8 @@ func (m Message) Validate() error {
 
 // Sender delivers a Message to a single chat tool.
 type Sender interface {
-	// Name identifies the chat tool, e.g. "webex", "teams", "slack".
+	// Name identifies the chat tool, e.g. "webex", "teams", "slack",
+	// or "discord".
 	Name() string
 	// Send delivers msg. Implementations should respect ctx cancellation.
 	Send(ctx context.Context, msg Message) error
@@ -104,13 +105,20 @@ type SlackConfig struct {
 	Channel string
 }
 
+// DiscordConfig configures the Discord sender. It is enabled when Dest is set.
+type DiscordConfig struct {
+	// Dest is the Discord incoming webhook URL.
+	Dest string
+}
+
 // Config aggregates the settings for every supported chat tool. A tool is
 // enabled simply by giving it a destination (Dest); a zero-value Dest means
 // the tool is disabled and its other fields are ignored.
 type Config struct {
-	Webex WebexConfig
-	Teams TeamsConfig
-	Slack SlackConfig
+	Webex   WebexConfig
+	Teams   TeamsConfig
+	Slack   SlackConfig
+	Discord DiscordConfig
 	// Proxy is an optional HTTP(S) proxy URL (e.g.
 	// "http://user:pass@proxy.example:8080") that every enabled tool's
 	// requests are routed through. A blank Proxy sends requests directly.
@@ -118,7 +126,7 @@ type Config struct {
 }
 
 // ConfigFromEnv builds a Config by reading environment variables. Prefer
-// LoadConfigFile for config.ini-based settings; this is for callers that
+// LoadConfigFile for config.toml-based settings; this is for callers that
 // keep settings in the process environment instead.
 //
 // Recognized variables:
@@ -126,6 +134,7 @@ type Config struct {
 //	WEBEX_TOKEN, WEBEX_DST
 //	MSTEAMS_DST
 //	SLACK_DST, SLACK_TOKEN, SLACK_CHANNEL
+//	DISCORD_DST
 //	PROXY
 func ConfigFromEnv() Config {
 	return Config{
@@ -141,12 +150,16 @@ func ConfigFromEnv() Config {
 			Token:   os.Getenv("SLACK_TOKEN"),
 			Channel: os.Getenv("SLACK_CHANNEL"),
 		},
+		Discord: DiscordConfig{
+			Dest: os.Getenv("DISCORD_DST"),
+		},
 		Proxy: os.Getenv("PROXY"),
 	}
 }
 
 // Senders returns a Sender for every chat tool in cfg that has a
-// destination configured, in a deterministic order (Webex, Teams, Slack).
+// destination configured, in a deterministic order (Webex, Teams, Slack,
+// Discord).
 // Every returned Sender routes its requests through cfg.Proxy, if set. It
 // returns an error if cfg.Proxy is set but not a valid proxy URL.
 func Senders(cfg Config) ([]Sender, error) {
@@ -170,6 +183,11 @@ func Senders(cfg Config) ([]Sender, error) {
 		s.client = client
 		out = append(out, s)
 	}
+	if strings.TrimSpace(cfg.Discord.Dest) != "" {
+		s := newDiscordSender(cfg.Discord)
+		s.client = client
+		out = append(out, s)
+	}
 	return out, nil
 }
 
@@ -177,6 +195,24 @@ func Senders(cfg Config) ([]Sender, error) {
 type Result struct {
 	Tool string
 	Err  error
+}
+
+// ToolDisplayName returns the human-readable product name for a Sender name.
+// Unknown names are returned unchanged so custom Sender implementations remain
+// useful in diagnostics.
+func ToolDisplayName(tool string) string {
+	switch tool {
+	case "webex":
+		return "Cisco Webex"
+	case "discord":
+		return "Discord"
+	case "teams":
+		return "Microsoft Teams"
+	case "slack":
+		return "Slack"
+	default:
+		return tool
+	}
 }
 
 // Dispatcher sends messages to every enabled chat tool.
@@ -207,12 +243,13 @@ func (d *Dispatcher) Send(ctx context.Context, msg Message) ([]Result, error) {
 	}
 	results := make([]Result, 0, len(d.senders))
 	for _, s := range d.senders {
-		debugx.Printf("sending message to %s", s.Name())
+		displayName := ToolDisplayName(s.Name())
+		debugx.Printf("sending message to %s", displayName)
 		err := s.Send(ctx, msg)
 		if err != nil {
-			debugx.Printf("%s: send failed: %v", s.Name(), err)
+			debugx.Printf("%s: send failed: %v", displayName, err)
 		} else {
-			debugx.Printf("%s: sent", s.Name())
+			debugx.Printf("%s: sent", displayName)
 		}
 		results = append(results, Result{Tool: s.Name(), Err: err})
 	}

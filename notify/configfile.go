@@ -1,113 +1,108 @@
 package notify
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
-	"gopkg.in/ini.v1"
+	"github.com/pelletier/go-toml/v2"
 )
 
 // DefaultProfile is the profile used when LoadConfigFile is given an empty
 // profile name.
 const DefaultProfile = "default"
 
-// LoadConfigFile parses the INI file at path and returns the Config for the
-// given profile (an INI section). An empty profile means DefaultProfile.
-// The config.ini file can hold several named profiles, e.g.:
+// LoadConfigFile parses the TOML file at path and returns the Config for the
+// given profile (a TOML table). An empty profile means DefaultProfile.
+// The config.toml file can hold several named profiles, e.g.:
 //
 //	[default]
-//	WEBEX_DST=...
+//	WEBEX_DST = "..."
 //
 //	[work]
-//	WEBEX_DST=...
-//
-// For DefaultProfile, keys in the file's top-level/global section (before
-// any "[section]" header) are used as a fallback if there is no explicit
-// "[default]" section. Any other requested profile must exist as an
-// explicit section, or LoadConfigFile returns an error.
+//	WEBEX_DST = "..."
 //
 // Recognized keys (same names as the historical .env variables):
 //
 //	WEBEX_TOKEN, WEBEX_DST
 //	MSTEAMS_DST
 //	SLACK_DST, SLACK_TOKEN, SLACK_CHANNEL
+//	DISCORD_DST
 //	PROXY
 func LoadConfigFile(path, profile string) (Config, error) {
-	f, err := ini.Load(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
+		return Config{}, fmt.Errorf("notify: read config file %s: %w", path, err)
+	}
+	profiles := make(map[string]fileProfile)
+	decoder := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()
+	if err := decoder.Decode(&profiles); err != nil {
 		return Config{}, fmt.Errorf("notify: parse config file %s: %w", path, err)
 	}
-	sec, err := configSection(f, profile)
+	selected, err := configProfile(profiles, profile)
 	if err != nil {
 		return Config{}, fmt.Errorf("notify: config file %s: %w", path, err)
 	}
 	return Config{
 		Webex: WebexConfig{
-			Token: cleanValue(sec.Key("WEBEX_TOKEN").String()),
-			Dest:  cleanValue(sec.Key("WEBEX_DST").String()),
+			Token: selected.WebexToken,
+			Dest:  selected.WebexDest,
 		},
 		Teams: TeamsConfig{
-			Dest: cleanValue(sec.Key("MSTEAMS_DST").String()),
+			Dest: selected.TeamsDest,
 		},
 		Slack: SlackConfig{
-			Dest:    cleanValue(sec.Key("SLACK_DST").String()),
-			Token:   cleanValue(sec.Key("SLACK_TOKEN").String()),
-			Channel: cleanValue(sec.Key("SLACK_CHANNEL").String()),
+			Dest:    selected.SlackDest,
+			Token:   selected.SlackToken,
+			Channel: selected.SlackChannel,
 		},
-		Proxy: cleanValue(sec.Key("PROXY").String()),
+		Discord: DiscordConfig{
+			Dest: selected.DiscordDest,
+		},
+		Proxy: selected.Proxy,
 	}, nil
 }
 
-// configSection picks the section holding the given profile's settings.
-func configSection(f *ini.File, profile string) (*ini.Section, error) {
+type fileProfile struct {
+	Proxy        string `toml:"PROXY"`
+	DiscordDest  string `toml:"DISCORD_DST"`
+	TeamsDest    string `toml:"MSTEAMS_DST"`
+	SlackDest    string `toml:"SLACK_DST"`
+	SlackToken   string `toml:"SLACK_TOKEN"`
+	SlackChannel string `toml:"SLACK_CHANNEL"`
+	WebexToken   string `toml:"WEBEX_TOKEN"`
+	WebexDest    string `toml:"WEBEX_DST"`
+}
+
+// configProfile picks the table holding the given profile's settings.
+func configProfile(profiles map[string]fileProfile, profile string) (fileProfile, error) {
 	if profile == "" {
 		profile = DefaultProfile
 	}
-	for _, name := range f.SectionStrings() {
-		// ini.DefaultSection ("DEFAULT") is the implicit section for keys
-		// with no section header; it is handled by the fallback below and
-		// must not be mistaken for an explicit "[default]" section.
-		if name == ini.DefaultSection {
-			continue
-		}
+	for name, selected := range profiles {
 		if strings.EqualFold(name, profile) {
-			return f.Section(name), nil
+			return selected, nil
 		}
 	}
-	if strings.EqualFold(profile, DefaultProfile) {
-		return f.Section(ini.DefaultSection), nil
-	}
-	return nil, fmt.Errorf("profile %q not found", profile)
+	return fileProfile{}, fmt.Errorf("profile %q not found", profile)
 }
 
-// cleanValue strips a single layer of matching surrounding quotes, as used
-// for string values in the example config (e.g. WEBEX_TOKEN="...").
-func cleanValue(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) >= 2 {
-		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
-			return s[1 : len(s)-1]
-		}
-	}
-	return s
-}
-
-// DefaultConfigPath resolves the config.ini path to use when none is given
+// DefaultConfigPath resolves the config.toml path to use when none is given
 // explicitly:
 //
-//  1. config.ini in the current working directory, if present.
+//  1. config.toml in the current working directory, if present.
 //  2. Otherwise a per-user, OS-specific location:
-//     - Linux/macOS: ~/.config/chatxgo/config.ini
-//     - Windows:     %AppData%\chatxgo\config.ini
+//     - Linux/macOS: ~/.config/chatxgo/config.toml
+//     - Windows:     %AppData%\chatxgo\config.toml
 //
 // The returned path is not guaranteed to exist; callers should os.Stat it
 // before loading.
 func DefaultConfigPath() (string, error) {
 	if dir, err := os.Getwd(); err == nil {
-		candidate := filepath.Join(dir, "config.ini")
+		candidate := filepath.Join(dir, "config.toml")
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil
 		}
@@ -131,9 +126,9 @@ func userConfigPath() (string, error) {
 }
 
 func windowsConfigPath(appData string) string {
-	return filepath.Join(appData, "chatxgo", "config.ini")
+	return filepath.Join(appData, "chatxgo", "config.toml")
 }
 
 func unixConfigPath(home string) string {
-	return filepath.Join(home, ".config", "chatxgo", "config.ini")
+	return filepath.Join(home, ".config", "chatxgo", "config.toml")
 }
