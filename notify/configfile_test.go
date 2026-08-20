@@ -22,6 +22,13 @@ WEBEX_TOKEN = "webex-token"
 WEBEX_DST = "room-id"
 
 PROXY = "http://proxy.example:8080"
+
+EMAIL_SMTP_HOST = "smtp.example.com"
+EMAIL_SMTP_PORT = 587
+EMAIL_FROM = "sender@example.com"
+EMAIL_TO = ["to1@example.com", "to2@example.com"]
+EMAIL_CC = ["cc@example.com"]
+EMAIL_BCC = ["bcc@example.com"]
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
@@ -47,6 +54,10 @@ PROXY = "http://proxy.example:8080"
 	}
 	if cfg.Proxy != "http://proxy.example:8080" {
 		t.Errorf("proxy = %q", cfg.Proxy)
+	}
+	if cfg.Email.Host != "smtp.example.com" || cfg.Email.Port != 587 || cfg.Email.From != "sender@example.com" ||
+		len(cfg.Email.To) != 2 || len(cfg.Email.Cc) != 1 || len(cfg.Email.Bcc) != 1 {
+		t.Errorf("email = %+v", cfg.Email)
 	}
 }
 

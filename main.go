@@ -1,5 +1,4 @@
-// Command chatxgo sends Markdown-formatted notifications to Cisco Webex,
-// Microsoft Teams, Slack, and Discord.
+// Command chatxgo sends Markdown-formatted notifications to chat tools and email.
 package main
 
 import (
@@ -116,7 +115,7 @@ func printUsage(fs *flag.FlagSet) {
 	fmt.Fprintln(fs.Output())
 	fmt.Fprintf(fs.Output(), "Usage: %s [options]\n\n", version.Name)
 	fmt.Fprintln(fs.Output(), "Sends a Markdown-formatted message to every chat tool enabled in")
-	fmt.Fprintln(fs.Output(), "config.toml (Cisco Webex, Microsoft Teams, Slack, Discord).")
+	fmt.Fprintln(fs.Output(), "config.toml (Cisco Webex, Microsoft Teams, Slack, Discord, and email).")
 	fmt.Fprintln(fs.Output())
 	fmt.Fprintln(fs.Output(), "Options:")
 	help := append([]flagHelp(nil), flagHelps...)

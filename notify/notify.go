@@ -1,5 +1,5 @@
 // Package notify sends Markdown-formatted messages to chat tools (Cisco
-// Webex, Microsoft Teams, Slack, Discord). It can be used as a library, or
+// Webex, Microsoft Teams, Slack, Discord) and email. It can be used as a library, or
 // driven by the chatxgo CLI.
 package notify
 
@@ -8,10 +8,29 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/sig9org/chatxgo/internal/debugx"
 )
+
+func envList(name string) []string {
+	var out []string
+	for _, value := range strings.Split(os.Getenv(name), ",") {
+		if value = strings.TrimSpace(value); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func envInt(name string, fallback int) int {
+	v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name)))
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return v
+}
 
 // ErrNoRecipients is returned when no chat tool is enabled in the config.
 var ErrNoRecipients = errors.New("notify: no chat tool is enabled")
@@ -111,6 +130,21 @@ type DiscordConfig struct {
 	Dest string
 }
 
+// EmailConfig configures SMTP email delivery. It is enabled when Host, From,
+// and at least one recipient are set. Port 465 uses implicit TLS; port 587
+// requires STARTTLS; other ports (including the traditional 25) use STARTTLS
+// when the server advertises it.
+type EmailConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	From     string
+	To       []string
+	Cc       []string
+	Bcc      []string
+}
+
 // Config aggregates the settings for every supported chat tool. A tool is
 // enabled simply by giving it a destination (Dest); a zero-value Dest means
 // the tool is disabled and its other fields are ignored.
@@ -119,6 +153,7 @@ type Config struct {
 	Teams   TeamsConfig
 	Slack   SlackConfig
 	Discord DiscordConfig
+	Email   EmailConfig
 	// Proxy is an optional HTTP(S) proxy URL (e.g.
 	// "http://user:pass@proxy.example:8080") that every enabled tool's
 	// requests are routed through. A blank Proxy sends requests directly.
@@ -152,6 +187,11 @@ func ConfigFromEnv() Config {
 		},
 		Discord: DiscordConfig{
 			Dest: os.Getenv("DISCORD_DST"),
+		},
+		Email: EmailConfig{
+			Host: os.Getenv("EMAIL_SMTP_HOST"), Port: envInt("EMAIL_SMTP_PORT", 25),
+			Username: os.Getenv("EMAIL_SMTP_USERNAME"), Password: os.Getenv("EMAIL_SMTP_PASSWORD"),
+			From: os.Getenv("EMAIL_FROM"), To: envList("EMAIL_TO"), Cc: envList("EMAIL_CC"), Bcc: envList("EMAIL_BCC"),
 		},
 		Proxy: os.Getenv("PROXY"),
 	}
@@ -188,6 +228,9 @@ func Senders(cfg Config) ([]Sender, error) {
 		s.client = client
 		out = append(out, s)
 	}
+	if emailEnabled(cfg.Email) {
+		out = append(out, newEmailSender(cfg.Email))
+	}
 	return out, nil
 }
 
@@ -210,6 +253,8 @@ func ToolDisplayName(tool string) string {
 		return "Microsoft Teams"
 	case "slack":
 		return "Slack"
+	case "email":
+		return "Email"
 	default:
 		return tool
 	}

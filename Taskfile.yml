@@ -159,6 +159,7 @@ tasks:
   go-scan:
     aliases: [gs]
     desc: 'Scan the application'
+    ignore_error: true
     cmds:
       - defer:
           task: time

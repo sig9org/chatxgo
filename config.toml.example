@@ -1,6 +1,15 @@
 [default]
 PROXY = ""
 
+EMAIL_SMTP_HOST = "smtp.example.com"
+EMAIL_SMTP_PORT = 587
+EMAIL_SMTP_USERNAME = ""
+EMAIL_SMTP_PASSWORD = ""
+EMAIL_FROM = ""
+EMAIL_TO = []
+EMAIL_CC = []
+EMAIL_BCC = []
+
 DISCORD_DST = ""
 
 MSTEAMS_DST = ""
@@ -11,6 +20,16 @@ SLACK_CHANNEL = ""
 
 WEBEX_TOKEN = ""
 WEBEX_DST = ""
+
+[email]
+EMAIL_SMTP_HOST = "smtp.example.com"
+EMAIL_SMTP_PORT = 587
+EMAIL_SMTP_USERNAME = ""
+EMAIL_SMTP_PASSWORD = ""
+EMAIL_FROM = ""
+EMAIL_TO = []
+EMAIL_CC = []
+EMAIL_BCC = []
 
 [teams]
 MSTEAMS_DST = ""

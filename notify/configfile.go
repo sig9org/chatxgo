@@ -62,19 +62,32 @@ func LoadConfigFile(path, profile string) (Config, error) {
 		Discord: DiscordConfig{
 			Dest: selected.DiscordDest,
 		},
+		Email: EmailConfig{
+			Host: selected.EmailSMTPHost, Port: selected.EmailSMTPPort,
+			Username: selected.EmailSMTPUsername, Password: selected.EmailSMTPPassword,
+			From: selected.EmailFrom, To: selected.EmailTo, Cc: selected.EmailCc, Bcc: selected.EmailBcc,
+		},
 		Proxy: selected.Proxy,
 	}, nil
 }
 
 type fileProfile struct {
-	Proxy        string `toml:"PROXY"`
-	DiscordDest  string `toml:"DISCORD_DST"`
-	TeamsDest    string `toml:"MSTEAMS_DST"`
-	SlackDest    string `toml:"SLACK_DST"`
-	SlackToken   string `toml:"SLACK_TOKEN"`
-	SlackChannel string `toml:"SLACK_CHANNEL"`
-	WebexToken   string `toml:"WEBEX_TOKEN"`
-	WebexDest    string `toml:"WEBEX_DST"`
+	Proxy             string   `toml:"PROXY"`
+	DiscordDest       string   `toml:"DISCORD_DST"`
+	TeamsDest         string   `toml:"MSTEAMS_DST"`
+	SlackDest         string   `toml:"SLACK_DST"`
+	SlackToken        string   `toml:"SLACK_TOKEN"`
+	SlackChannel      string   `toml:"SLACK_CHANNEL"`
+	WebexToken        string   `toml:"WEBEX_TOKEN"`
+	WebexDest         string   `toml:"WEBEX_DST"`
+	EmailSMTPHost     string   `toml:"EMAIL_SMTP_HOST"`
+	EmailSMTPPort     int      `toml:"EMAIL_SMTP_PORT"`
+	EmailSMTPUsername string   `toml:"EMAIL_SMTP_USERNAME"`
+	EmailSMTPPassword string   `toml:"EMAIL_SMTP_PASSWORD"`
+	EmailFrom         string   `toml:"EMAIL_FROM"`
+	EmailTo           []string `toml:"EMAIL_TO"`
+	EmailCc           []string `toml:"EMAIL_CC"`
+	EmailBcc          []string `toml:"EMAIL_BCC"`
 }
 
 // configProfile picks the table holding the given profile's settings.
