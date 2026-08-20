@@ -32,6 +32,15 @@ SLACK_CHANNEL = "..."    # optional, channel for uploaded attachments
 
 DISCORD_DST = "..."      # Discord incoming webhook URL
 
+EMAIL_SMTP_HOST = "smtp.example.com"
+EMAIL_SMTP_PORT = 587    # 465 = implicit TLS, 587 = STARTTLS, 25 = STARTTLS when available
+EMAIL_SMTP_USERNAME = "..."
+EMAIL_SMTP_PASSWORD = "..."
+EMAIL_FROM = "sender@example.com"
+EMAIL_TO = ["alice@example.com", "bob@example.com"]
+EMAIL_CC = ["team@example.com"]
+EMAIL_BCC = ["audit@example.com"]
+
 PROXY = "..."            # optional, HTTP(S) proxy URL used by every enabled tool
 ```
 
@@ -59,6 +68,12 @@ SLACK_DST = "https://hooks.slack.example/work"
 ```
 
 Select which profile to use with `-profile`/`-p` (default: `default`). Every setting must belong to a profile table; `[default]` is required when the default profile is used. Requesting a profile that doesn't exist in the file is an error.
+
+### Email delivery
+
+Email is enabled when `EMAIL_SMTP_HOST`, `EMAIL_FROM`, and at least one of `EMAIL_TO`, `EMAIL_CC`, or `EMAIL_BCC` are set. Recipient values are TOML arrays, so multiple addresses can be specified for each header. Bcc addresses are used for SMTP delivery but are omitted from the message headers.
+
+Port 465 uses implicit TLS. Port 587 requires STARTTLS. Port 25 uses STARTTLS when advertised, preserving compatibility with traditional SMTP servers. SMTP authentication is performed after TLS is established.
 
 ## CLI usage
 
