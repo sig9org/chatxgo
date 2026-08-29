@@ -44,9 +44,13 @@ tasks:
           task: time
           vars:
             START_TIME: '{{.START_TIME}}'
+      - task: cleanup:internal
+
+  cleanup:internal:
+    internal: true
+    cmds:
       - task: cleanup:shell
       - task: cleanup:win
-      - task: cleanup:refresh
 
   cleanup:shell:
     internal: true
@@ -68,17 +72,10 @@ tasks:
       - for: { var: CLEANUP_FILES }
         cmd: powershell -NoProfile -Command "Get-ChildItem -Path . -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq '{{.ITEM}}' } | ForEach-Object { Write-Output ('[DELETE]' + $_.FullName); Remove-Item -LiteralPath $_.FullName -Force }"
 
-  cleanup:refresh:
-    internal: true
-    dir: '{{.ROOT_DIR}}'
-    env:
-      TASK_X_REMOTE_TASKFILES: 1
-    cmds:
-      - task --yes --download --force --list-all > /dev/null 2>&1
-
   go-build:
     aliases: [gb]
     desc: 'Build a binary for the current platform'
+    dir: '{{.TASKFILE_DIR}}'
     cmds:
       - defer:
           task: time
@@ -89,13 +86,14 @@ tasks:
           vars:
             NOTIFY_TITLE: 'Go Build'
             NOTIFY_BODY: 'Done.'
-      - task: go-clean
+      - task: go-clean:internal
       - echo "Building binary for {{OS}}/{{ARCH}}..."
       - go build -ldflags "-X {{.VERSION_PKG}}.Version={{.VERSION}}" -o {{.DIST_DIR}}/{{.BINARY_NAME}}{{if eq OS "windows"}}.exe{{end}} .
 
   go-build-all:
     aliases: [gba]
     desc: 'Cross-compile release binaries for all platforms'
+    dir: '{{.TASKFILE_DIR}}'
     cmds:
       - defer:
           task: time
@@ -106,7 +104,7 @@ tasks:
           vars:
             NOTIFY_TITLE: 'Go Build All'
             NOTIFY_BODY: 'Done.'
-      - task: go-clean
+      - task: go-clean:internal
       - |
         set -e
         for target in {{.PLATFORMS}}; do
@@ -118,25 +116,69 @@ tasks:
           echo "building ${out}"
           CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -ldflags "-X {{.VERSION_PKG}}.Version={{.RELEASE_VERSION}}" -o "$out" .
         done
+      - task: go-hash
 
   go-clean:
     aliases: [gc]
     desc: 'Delete the contents of the distribution directory'
+    dir: '{{.TASKFILE_DIR}}'
     cmds:
       - defer:
           task: time
           vars:
             START_TIME: '{{.START_TIME}}'
+      - defer:
+          task: notify
+          vars:
+            NOTIFY_TITLE: 'Go Clean'
+            NOTIFY_BODY: 'Done.'
+      - task: go-clean:internal
+
+  go-clean:internal:
+    dir: '{{.TASKFILE_DIR}}'
+    internal: true
+    cmds:
       - rm -rfv {{.DIST_DIR}}/*
       - mkdir -p {{.DIST_DIR}}
 
+  go-hash:
+    dir: '{{.TASKFILE_DIR}}'
+    internal: true
+    platforms: [darwin, linux]
+    vars:
+      HASHTOOL:
+        sh: |
+          case "{{OS}}" in
+            darwin) echo "shasum -a 256" ;;
+            linux)  echo "sha256sum" ;;
+          esac
+    cmds:
+      - |
+        set -e
+        : > "{{.DIST_DIR}}/checksums.txt"
+        for binary in "{{.DIST_DIR}}"/*; do
+          [ -f "$binary" ] || continue
+          case "$binary" in
+            */checksums.txt|*.sig) continue ;;
+          esac
+          name=${binary##*/}
+          echo "hashing ${name}"
+          (cd "{{.DIST_DIR}}" && {{.HASHTOOL}} "$name") >> "{{.DIST_DIR}}/checksums.txt"
+        done
+
   go-register:
     desc: 'Register the latest tagged version on pkg.go.dev'
+    dir: '{{.TASKFILE_DIR}}'
     cmds:
       - defer:
           task: time
           vars:
             START_TIME: '{{.START_TIME}}'
+      - defer:
+          task: notify
+          vars:
+            NOTIFY_TITLE: 'Go Register'
+            NOTIFY_BODY: 'Done.'
       - |
         set -e
         version=$(git describe --tags --abbrev=0)
@@ -149,22 +191,50 @@ tasks:
   go-run:
     aliases: [gr]
     desc: 'Run the application'
+    dir: '{{.TASKFILE_DIR}}'
     cmds:
       - defer:
           task: time
           vars:
             START_TIME: '{{.START_TIME}}'
+      - defer:
+          task: notify
+          vars:
+            NOTIFY_TITLE: 'Go Run'
+            NOTIFY_BODY: 'Done.'
       - go run . {{.CLI_ARGS}}
+
+  go-run-debug:
+    aliases: [grd]
+    desc: 'Run the application (debug)'
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - defer:
+          task: time
+          vars:
+            START_TIME: '{{.START_TIME}}'
+      - defer:
+          task: notify
+          vars:
+            NOTIFY_TITLE: 'Go Run (debug)'
+            NOTIFY_BODY: 'Done.'
+      - go run . -debug {{.CLI_ARGS}}
 
   go-scan:
     aliases: [gs]
     desc: 'Scan the application'
+    dir: '{{.TASKFILE_DIR}}'
     ignore_error: true
     cmds:
       - defer:
           task: time
           vars:
             START_TIME: '{{.START_TIME}}'
+      - defer:
+          task: notify
+          vars:
+            NOTIFY_TITLE: 'Go Scan'
+            NOTIFY_BODY: 'Done.'
       - |
         GREEN='\033[0;32m'
         RESET='\033[0m'
@@ -179,22 +249,34 @@ tasks:
   go-test:
     aliases: [gt]
     desc: 'Run the Go test suite'
+    dir: '{{.TASKFILE_DIR}}'
     cmds:
       - defer:
           task: time
           vars:
             START_TIME: '{{.START_TIME}}'
+      - defer:
+          task: notify
+          vars:
+            NOTIFY_TITLE: 'Go Test'
+            NOTIFY_BODY: 'Done.'
       - go vet ./...
       - go test ./...
 
   go-version:
     aliases: [gv]
     desc: 'Show version information'
+    dir: '{{.TASKFILE_DIR}}'
     cmds:
       - defer:
           task: time
           vars:
             START_TIME: '{{.START_TIME}}'
+      - defer:
+          task: notify
+          vars:
+            NOTIFY_TITLE: 'Go Version'
+            NOTIFY_BODY: 'Done.'
       - go run -ldflags "-X {{.VERSION_PKG}}.Version={{.VERSION}}" . -v
 
   notify:
