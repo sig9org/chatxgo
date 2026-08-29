@@ -1,6 +1,9 @@
 # Project-Specific
 
 
+# AI Agent
+AGENTS.md
+CLAUDE.md
 
 # Ansible
 .ansible/
@@ -22,6 +25,10 @@ config.ini
 config.toml
 config.yml
 config.yaml
+config_debug.ini
+config_debug.toml
+config_debug.yml
+config_debug.yaml
 
 # Code coverage profiles and other test artifacts
 *.coverprofile
@@ -40,7 +47,6 @@ go.work.sum
 
 # go-task
 .task/
-.task_start_time
 
 # Python
 __marimo__/
